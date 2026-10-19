@@ -538,7 +538,7 @@ open class SliceBeam : Application() {
     @SuppressLint("ApplySharedPref")
     override fun onCreate() {
         super.onCreate()
-        AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("de"))
+        AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("en"))
         INSTANCE = this
         TemporaryProjectSettings.onChanged = { settingsChanged ->
             android.os.Handler(android.os.Looper.getMainLooper()).post {
