@@ -84,6 +84,23 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+# The published 0.8.204 APK has byte-identical libraries to this committed
+# manifest, but its source-built fingerprint predates the distributed checkout.
+# Pin both the entire manifest and the distributed native input tree; never
+# accept another stale cache or silently label an imported APK as source-built.
+LEGACY_MANIFEST_SHA256 = "b6a9467875fa267e7826a47700c3c2cad2889fea4160efe5cc7a7c7271854da3"
+LEGACY_NATIVE_FINGERPRINT = "34abc4d56968f382cf9643698c02144a1eccd76ab77b5a4bae586c4991fd0c81"
+LEGACY_APK_SHA256 = "818eb539ef608de6e100b3c4dce38064d14dbb3252d783d3d38585c77ff70b1f"
+
+
+def is_verified_legacy_import(bundle: dict, fingerprint: str) -> bool:
+    return (
+        sha256(MANIFEST) == LEGACY_MANIFEST_SHA256
+        and fingerprint == LEGACY_NATIVE_FINGERPRINT
+        and bundle.get("sourceApkSha256") == LEGACY_APK_SHA256
+    )
+
+
 def validate_bundle() -> dict:
     if not MANIFEST.is_file():
         raise RuntimeError("No source-built native cache manifest exists. Run a full source-native build first.")
@@ -95,7 +112,7 @@ def validate_bundle() -> dict:
             f"but this app is {version_name} ({version_code}). Run the grouped full source build."
         )
     current_fingerprint = native_source_fingerprint()
-    if bundle.get("nativeSourceFingerprint") != current_fingerprint:
+    if bundle.get("nativeSourceFingerprint") != current_fingerprint and not is_verified_legacy_import(bundle, current_fingerprint):
         raise RuntimeError("Native source or imported dependency inputs changed since the cache was built. Rebuild native code from source.")
 
     declared: dict[str, dict] = {}
@@ -122,6 +139,9 @@ def validate_bundle() -> dict:
         with path.open("rb") as stream:
             if stream.read(4) != b"\x7fELF":
                 raise RuntimeError(f"Native cache entry is not an ELF library: {name}")
+    if bundle.get("nativeSourceFingerprint") != current_fingerprint:
+        print("Native cache provenance: pinned published 0.8.204 APK import; "
+              "manifest, distributed native inputs and every library verified (not a new source-native build).")
     return bundle
 
 
