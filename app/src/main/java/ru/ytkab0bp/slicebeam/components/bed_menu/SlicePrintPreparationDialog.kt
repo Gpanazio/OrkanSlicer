@@ -63,6 +63,7 @@ object SlicePrintPreparationDialog {
         activeTools: IntArray,
         sourceFilamentTypes: List<String>,
         activateProfile: PrinterProfileAction,
+        reopenAfterReslice: (ConfigObject) -> Unit,
         sendAction: SliceMenuItems.SendAction,
     ) {
         val context = fragment.getContext() ?: return
@@ -97,7 +98,7 @@ object SlicePrintPreparationDialog {
                         },
                         onSelectPrinter = { chosen ->
                             selectedPrinter.value = chosen
-                            printerChanged.value = SlicePreparationTools.didPrinterChange(
+                            printerChanged.value = printerChanged.value || SlicePreparationTools.didPrinterChange(
                                 printer.title,
                                 chosen.title,
                             )
@@ -129,15 +130,23 @@ object SlicePrintPreparationDialog {
             val targetType = targetPrinter.get("host_type") ?: "octoprint"
             val targetHost = targetPrinter.get("print_host") ?: return@setOnClickListener
             val targetApiKey = targetPrinter.get("printhost_apikey")
-            when (SlicePreparationTools.activateChangedPrinter(printer.title, targetPrinter.title) {
+            val activation = SlicePreparationTools.activateChangedPrinter(printer.title, targetPrinter.title) {
                 activateProfile.activate(targetPrinter)
-            }) {
+            }
+            if (activation == SlicePreparationTools.PrinterActivationResult.UNCHANGED &&
+                (printerChanged.value || !fragment.hasSliceResult())) {
+                dialog.dismiss()
+                Toast.makeText(context, R.string.PrintPrepareReslicing, Toast.LENGTH_LONG).show()
+                fragment.startSlicing { reopenAfterReslice(targetPrinter) }
+                return@setOnClickListener
+            }
+            when (activation) {
                 SlicePreparationTools.PrinterActivationResult.FAILED -> return@setOnClickListener
                 SlicePreparationTools.PrinterActivationResult.ACTIVATED -> {
                     dialog.dismiss()
                     Toast.makeText(context, R.string.PrintPrepareReslicing, Toast.LENGTH_LONG).show()
                     fragment.startSlicing {
-                        sendAction.send(targetType, targetHost, targetApiKey, targetPrinter, print)
+                        reopenAfterReslice(targetPrinter)
                     }
                     return@setOnClickListener
                 }
