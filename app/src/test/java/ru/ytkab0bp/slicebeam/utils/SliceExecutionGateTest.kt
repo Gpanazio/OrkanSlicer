@@ -49,4 +49,32 @@ class SliceExecutionGateTest {
             assertTrue(ran)
         }
     }
+    @Test fun staysBusyUntilQueuedUiPublicationFinishes() {
+        lateinit var publish: () -> Unit
+        val gate = SliceExecutionGate { publish = it }
+        var busy = 0
+        var published = false
+        gate.launch({ busy++ }, { complete -> { complete { published = true } } }, { it() })
+        gate.launch({ busy++ }, { fail("Must wait for UI publication"); {} }, { it() })
+        assertEquals(1, busy)
+        assertFalse(published)
+        publish()
+        assertTrue(published)
+        gate.launch({ fail("UI publication must release") }, { {} }, { it() })
+    }
+
+    @Test fun uiPublicationOrDispatchFailureStillReleasesGate() {
+        for (failDispatch in listOf(false, true)) {
+            lateinit var publish: () -> Unit
+            val failure = OutOfMemoryError("UI")
+            val gate = SliceExecutionGate { if (failDispatch) throw failure else publish = it }
+            try {
+                gate.launch({ fail("Unexpected busy") }, { complete -> { complete { throw failure } } }, { it() })
+                publish()
+                fail("Expected failure")
+            } catch (actual: Throwable) { assertSame(failure, actual) }
+            gate.launch({ fail("Stuck after UI failure") }, { {} }, { it() })
+        }
+    }
+
 }
