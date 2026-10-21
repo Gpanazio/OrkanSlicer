@@ -1,5 +1,6 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
+  <string name="SliceAlreadyRunning">Slicing is already in progress. Wait for it to finish, then try again.</string>
   <string name="UploadSliceMissing">The slice is no longer available. Slice the model again before sending it.</string>
   <string name="UploadPrinterAlreadyStarted">The printer has already started this job.</string>
   <string name="UploadPrinterQueued">The printer has queued this job.</string>

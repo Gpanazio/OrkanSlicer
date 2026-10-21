@@ -227,7 +227,7 @@ return Debug.getNativeHeapAllocatedSize() >= LARGE_MODEL_NATIVE_HEAP_BYTES
 private fun getProjectPlateId(index:Int):Int {
 return if (index >= 0 && index < projectPlateIds.size) projectPlateIds.get(index) else 0
 }
-private val sliceInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+private val sliceExecution = ru.ytkab0bp.slicebeam.utils.SliceExecutionGate()
 private var slicedConfigUid = -1
 private var slicedPrinter: String? = null
 fun hasSliceResult():Boolean {
@@ -339,14 +339,17 @@ private fun runSlice(model:Model, onSuccess:Runnable? = null) {
 val ctx = getContext()
 if (ctx == null || glView == null || model !== currentModel) return
 // Native slicing writes a shared config and output path; never allow two writers.
-if (!sliceInFlight.compareAndSet(false, true)) return
+try {
+sliceExecution.launch(onBusy = {
+    SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(R.string.SliceAlreadyRunning))
+}, prepare = {
 slicedConfigUid = -1
 tempExportingFile = null
 val cfg = SliceBeam.getCurrentConfigFile()
 val gcode = tempGCodePath
 val settingsRevision = TemporaryProjectSettings.sliceRevision
 if (!DEBUG_VIEWER) SliceProgressBottomSheet(ctx).show()
-Thread({ try
+val work: () -> Unit = { try
 {
 Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT)
 SliceBeam.ensureCompatibleSelection()
@@ -372,7 +375,6 @@ GCodeProcessorResult(gcode)
 }
 ViewUtils.postOnMainThread({
 val viewport = glView
-sliceInFlight.set(false)
 if (destroyed || viewport == null || model !== currentModel || settingsRevision != TemporaryProjectSettings.sliceRevision ||
     !ru.ytkab0bp.slicebeam.utils.SliceResultValidity.isCurrent(sliceConfigUid, slicePrinter,
         SliceBeam.CONFIG_UID, SliceBeam.CONFIG?.presets?.get("printer"))) {
@@ -392,17 +394,27 @@ val portrait = usesCompactPortraitLayout(ctx)
 .refreshItems(portrait)
 if (onSuccess != null) onSuccess.run() })
 }
-catch (e:Exception) {
-Log.e("BedFragment", "Slice failed", e)
-ViewUtils.postOnMainThread({ sliceInFlight.set(false)
-SliceBeam.EVENT_BUS.fireEvent(SlicingProgressEvent(100, ""))
-BeamAlertDialogBuilder(ctx)
-.setTitle(R.string.SliceFailed)
-.setMessage(e.message)
-.setPositiveButton(android.R.string.ok, null)
-.show() })
+catch (failure: Throwable) {
+    showSliceFailure(ctx, failure)
 }
-}).start()
+}
+work
+})
+} catch (failure: Throwable) {
+    showSliceFailure(ctx, failure)
+}
+}
+private fun showSliceFailure(ctx: Context, failure: Throwable) {
+Log.e("BedFragment", "Slice failed", failure)
+ViewUtils.postOnMainThread {
+    SliceBeam.EVENT_BUS.fireEvent(SlicingProgressEvent(100, ""))
+    if (destroyed || getContext() == null) return@postOnMainThread
+    BeamAlertDialogBuilder(ctx)
+        .setTitle(R.string.SliceFailed)
+        .setMessage(failure.message ?: ctx.getString(R.string.SliceFailed))
+        .setPositiveButton(android.R.string.ok, null)
+        .show()
+}
 }
 fun simplifySelectedObject(keepRatio:Float) {
 val model = currentModel
