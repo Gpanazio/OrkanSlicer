@@ -17,10 +17,10 @@ object OctoPrintResponseInspector {
         val printStarted: Boolean?,
     ) {
         fun outcome(printRequested: Boolean): UploadOutcome = when {
-            printRequested && printStarted == true -> UploadOutcome.PRINT_STARTED
+            printStarted == true -> UploadOutcome.PRINT_STARTED
+            processingDone == false -> UploadOutcome.PROCESSING
             printRequested && selected == true -> UploadOutcome.SELECTED_NOT_STARTED
             printRequested -> UploadOutcome.PRINT_NOT_STARTED
-            processingDone == false -> UploadOutcome.PROCESSING
             else -> UploadOutcome.UPLOADED
         }
     }

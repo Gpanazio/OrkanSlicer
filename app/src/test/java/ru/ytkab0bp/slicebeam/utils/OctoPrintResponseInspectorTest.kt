@@ -35,7 +35,7 @@ class OctoPrintResponseInspectorTest {
         assertFalse(processing!!.processingDone == true)
         assertNull(processing.printStarted)
         assertEquals(OctoPrintResponseInspector.UploadOutcome.PROCESSING, processing.outcome(false))
-        assertEquals(OctoPrintResponseInspector.UploadOutcome.PRINT_NOT_STARTED, processing.outcome(true))
+        assertEquals(OctoPrintResponseInspector.UploadOutcome.PROCESSING, processing.outcome(true))
         val legacy = OctoPrintResponseInspector.uploadedFile(bytes(
             """{"files":{"local":{"name":"legacy.gcode"}}}"""))
         assertNull(legacy?.processingDone)
@@ -45,6 +45,19 @@ class OctoPrintResponseInspectorTest {
         val selected = OctoPrintResponseInspector.uploadedFile(bytes(
             """{"files":{"local":{"path":"selected.gcode"}},"effectiveSelect":true,"effectivePrint":false}"""))
         assertEquals(OctoPrintResponseInspector.UploadOutcome.SELECTED_NOT_STARTED, selected?.outcome(true))
+    }
+
+    @Test fun actualPrintTakesPriorityEvenForUploadOnlyAndWhileProcessing() {
+        val reply = OctoPrintResponseInspector.UploadAcknowledgement("job.gcode", false, true, true)
+        assertEquals(OctoPrintResponseInspector.UploadOutcome.PRINT_STARTED, reply.outcome(false))
+        assertEquals(OctoPrintResponseInspector.UploadOutcome.PRINT_STARTED, reply.outcome(true))
+    }
+
+    @Test fun processingTakesPriorityOverSelectedAndUnconfirmedStart() {
+        for (selected in listOf(null, false, true)) {
+            val reply = OctoPrintResponseInspector.UploadAcknowledgement("job.gcode", false, selected, false)
+            assertEquals(OctoPrintResponseInspector.UploadOutcome.PROCESSING, reply.outcome(true))
+        }
     }
 
     @Test fun unrelatedFolderOrUnsafePathIsNotAFileAcknowledgement() {
