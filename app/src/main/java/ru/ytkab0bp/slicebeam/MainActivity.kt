@@ -708,36 +708,12 @@ return null
 }
 @Throws(IOException::class)
 private fun countPlates(zip:ZipFile):Int {
-var maxPlate = 0
 val modelSettings = zip.getEntry("Metadata/model_settings.config")
-if (modelSettings != null)
-{
-val xml = readZipEntryText(zip, modelSettings)
-// Match actual <plate ...> elements only; the old prefix search also counted
- // the enclosing <plates> element and created a phantom empty final plate.
- val matcher = java.util.regex.Pattern.compile("<plate(?:\\s|>)").matcher(xml)
-while (matcher.find()) maxPlate++
-}
+val xml = if (modelSettings != null) readZipEntryText(zip, modelSettings) else null
+val names = ArrayList<String>()
 val entries = zip.entries()
-while (entries.hasMoreElements())
-{
-val name = entries.nextElement().getName()
-if (name.startsWith("Metadata/plate_") && (name.endsWith(".png") || name.endsWith(".json") || name.endsWith(".gcode")))
-{
-val num = name.substring("Metadata/plate_".length)
-var end = 0
-while (end < num.length && Character.isDigit(num.get(end))) end++
-if (end > 0)
-{
-try
-{
-maxPlate = Math.max(maxPlate, java.lang.Integer.parseInt(num.substring(0, end)))
-}
-catch (ignored:NumberFormatException) {}
-}
-}
-}
-return Math.max(maxPlate, 1)
+while (entries.hasMoreElements()) names.add(entries.nextElement().name)
+return ThreeMfPlateCountDetector.detect(xml, names)
 }
 private fun importEmbedded3mfProfiles(file:File):Project3mfImportResult {
 val result = Project3mfImportResult()
