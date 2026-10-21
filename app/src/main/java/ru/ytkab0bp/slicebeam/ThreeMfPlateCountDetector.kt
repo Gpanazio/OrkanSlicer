@@ -4,7 +4,8 @@ import java.io.IOException
 
 /** Counts actual project plates, ignoring orphan thumbnail images in 3MF archives. */
 internal object ThreeMfPlateCountDetector {
-    private const val MAX_PLATES = 32
+    // OrcaSlicer desktop: src/slic3r/GUI/PartPlate.hpp, MAX_PLATE_COUNT.
+    private const val MAX_PLATES = 36
     private val ignoredXml = Regex("<!--[\\s\\S]*?-->|<!\\[CDATA\\[[\\s\\S]*?]]>")
     private val plateElement = Regex("<plate(?:\\s|/?>)")
     private val plateData = Regex("^Metadata/plate_(\\d+)\\.(?:json|gcode)$", RegexOption.IGNORE_CASE)

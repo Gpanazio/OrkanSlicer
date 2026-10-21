@@ -27,6 +27,17 @@ class ThreeMfPlateCountDetectorTest {
         assertEquals(2, ThreeMfPlateCountDetector.detect(xml, listOf("Metadata/plate_3.png")))
     }
 
+    @Test fun acceptsAll36DesktopPlatesIncludingProjectsAbove32() {
+        val xml = "<config>" + "<plate />".repeat(36) + "</config>"
+        assertEquals(36, ThreeMfPlateCountDetector.detect(xml, emptyList()))
+        assertEquals(36, ThreeMfPlateCountDetector.detect(null, listOf("Metadata/plate_36.json")))
+    }
+
+    @Test(expected = IOException::class)
+    fun rejectsProjectsAboveDesktopLimit() {
+        ThreeMfPlateCountDetector.detect("<config>" + "<plate />".repeat(37) + "</config>", emptyList())
+    }
+
     @Test(expected = IOException::class)
     fun rejectsUnreasonablePlateIndexesBeforeAllocatingModels() {
         ThreeMfPlateCountDetector.detect(null, listOf("Metadata/plate_1000000.json"))

@@ -587,6 +587,7 @@ internal var importedProfiles:Int = 0
 internal var plateCount:Int = 1
 internal var settings: ThreeMfProjectSettings? = null
 internal var settingsError:Boolean = false
+internal var plateCountError:Boolean = false
 internal var missingProfileIds:List<String> = emptyList()
 }
 @Throws(IOException::class)
@@ -717,9 +718,9 @@ return ThreeMfPlateCountDetector.detect(xml, names)
 }
 private fun importEmbedded3mfProfiles(file:File):Project3mfImportResult {
 val result = Project3mfImportResult()
-try
-{
-ZipFile(file).use { result.plateCount = countPlates(it) }
+val metadata = ThreeMfImportStages.read(
+    countPlates = { ZipFile(file).use { countPlates(it) } },
+    readSettings = {
 val processKeys = Slic3rConfigWrapper.PRINT_CONFIG_KEYS.toSet() +
     ru.ytkab0bp.slicebeam.ui.settings.OrcaProcessSettingsCatalog.categories().flatMap { it.sections }.flatMap { it.keys }
 val filamentKeys = Slic3rConfigWrapper.FILAMENT_CONFIG_KEYS.toSet() +
@@ -732,16 +733,20 @@ val read = ThreeMfProjectSettingsReader.read(file, PrintConfigDef.getInstance().
 result.missingProfileIds = read.missingProfileIds
 val fallback = Prefs.getStoredFilamentSlots()
 val projectFilaments = read.filaments.ifEmpty { fallback.map { emptyMap<String, String>() } }
-result.settings = if (!read.hasSettings) null else read.copy(filaments = projectFilaments.mapIndexed { index, values ->
+if (!read.hasSettings) null else read.copy(filaments = projectFilaments.mapIndexed { index, values ->
     val slot = fallback.getOrElse(index) { fallback.last() }
     mapOf("filament_colour" to TemporaryProjectSettings.colorText(slot.color), "filament_type" to (slot.type ?: "PLA")) + values
 })
+    })
+result.plateCount = metadata.plateCount
+result.settings = metadata.settings
+metadata.plateCountError?.let {
+    result.plateCountError = true
+    Log.w("MainActivity", "Failed to count 3MF build plates from " + file, it)
 }
-catch (e:Exception) {
-// Geometry loading should still proceed for a valid 3MF even when embedded settings are absent
- // or too new for the mobile converter.
- result.settingsError = true
- Log.w("MainActivity", "Failed to import embedded 3MF profiles from " + file, e)
+metadata.settingsError?.let {
+    result.settingsError = true
+    Log.w("MainActivity", "Failed to import embedded 3MF profiles from " + file, it)
 }
 return result
 }
@@ -1353,6 +1358,10 @@ ViewUtils.postOnMainThread {
         val names = ids.take(3).joinToString(", ") { it.take(60) } + if (ids.size > 3) " …" else ""
         SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(SnackbarsLayout.Type.WARNING,
             getString(R.string.ProjectSettingsMissingProfiles, names)))
+    }
+    if (projectImport.plateCountError) {
+        SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(SnackbarsLayout.Type.WARNING,
+            R.string.ProjectPlateCountFailed))
     }
     if (projectImport.settingsError) {
         SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(SnackbarsLayout.Type.WARNING,

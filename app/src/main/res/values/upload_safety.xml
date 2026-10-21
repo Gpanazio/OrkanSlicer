@@ -1,6 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
   <string name="SliceAlreadyRunning">Slicing is already in progress. Wait for it to finish, then try again.</string>
+  <string name="ProjectPlateCountFailed">Build plate metadata is invalid or exceeds the 36-plate limit. Geometry will open on one plate; project settings will still be read.</string>
   <string name="UploadSliceMissing">The slice is no longer available. Slice the model again before sending it.</string>
   <string name="UploadPrinterQueued">The printer has queued this job.</string>
   <string name="UploadFileNotConfirmed">The printer did not confirm the uploaded file. Check its file list before sending again.</string>

@@ -47,6 +47,7 @@ class ThreeMfProjectSettingsReaderTest {
             definitions, processKeys, filamentKeys,
         )
         assertEquals("0.24", project.process["layer_height"])
+        assertTrue(project.missingProfileIds.isEmpty())
         assertEquals(listOf("#112233", "#FFEEDD"), project.filaments.map { it["filament_colour"] })
         assertEquals(listOf("PLA", "PETG"), project.filaments.map { it["filament_type"] })
         assertEquals(listOf("211", "236"), project.filaments.map { it["nozzle_temperature"] })
@@ -59,6 +60,7 @@ class ThreeMfProjectSettingsReaderTest {
             definitions, processKeys, filamentKeys,
         )
         assertEquals("0.2", project.process["layer_height"])
+        assertTrue(project.missingProfileIds.isEmpty())
         assertEquals(listOf("#26A69A", "#A4C41E", "#00C1AE"),
             project.filaments.map { it["filament_colour"] })
         assertEquals(listOf("PLA", "PLA", "PLA"), project.filaments.map { it["filament_type"] })
@@ -153,15 +155,59 @@ class ThreeMfProjectSettingsReaderTest {
         assertTrue(result.missingProfileIds.isEmpty())
     }
 
-    @Test fun missingParentProfilesAreNamedWithoutDroppingLocalSettings() {
+    @Test fun embeddedOverridesDoNotWarnAboutUnavailableBaseProfiles() {
         val result = read(mapOf(
             "Metadata/process_settings_1.config" to """{"name":"Child","inherits":"Absent process","wall_loops":"4"}""",
             "Metadata/filament_settings_1.config" to """{"name":"Blue","inherits":"Absent PLA","nozzle_temperature":["220"]}""",
             "Metadata/project_settings.config" to """{"print_settings_id":"Child","filament_settings_id":["Blue"],"layer_height":"0.28"}""",
         ))
-        assertEquals(listOf("Absent process", "Absent PLA"), result.missingProfileIds)
+        assertTrue(result.missingProfileIds.isEmpty())
         assertEquals("4", result.process["wall_loops"])
         assertEquals("220", result.filaments.single()["nozzle_temperature"])
+    }
+
+    @Test fun flattenedBambuOrcaSettingsDoNotRequireInstalledPresetNames() {
+        val result = read(mapOf("Metadata/project_settings.config" to """{
+            "print_settings_id":"0.20mm Standard @BBL X1C", "layer_height":"0.2",
+            "filament_settings_id":["Bambu PLA Basic @BBL X1C"], "nozzle_temperature":["220"] }"""))
+        assertTrue(result.missingProfileIds.isEmpty())
+        assertEquals("0.2", result.process["layer_height"])
+        assertEquals("220", result.filaments.single()["nozzle_temperature"])
+    }
+
+    @Test fun trulyMissingBaseWithNoEmbeddedSettingsStillWarns() {
+        val result = read(mapOf(
+            "Metadata/project_settings.config" to """{"print_settings_id":"Child"}""",
+            "Metadata/process_settings_1.config" to """{"name":"Child","inherits":"Missing base"}""",
+        ))
+        assertEquals(listOf("Missing base"), result.missingProfileIds)
+        assertFalse(result.hasSettings)
+    }
+
+    @Test fun plateCountFailureDoesNotSkipProjectSettingsImport() {
+        val xml = "<config>" + "<plate />".repeat(37) + "</config>"
+        val result = ru.ytkab0bp.slicebeam.ThreeMfImportStages.read(
+            countPlates = { ru.ytkab0bp.slicebeam.ThreeMfPlateCountDetector.detect(xml, emptyList()) },
+            readSettings = { read(mapOf(
+                "Metadata/model_settings.config" to xml,
+                "Metadata/project_settings.config" to """{"layer_height":"0.28","nozzle_temperature":["220"]}""",
+            )) },
+        )
+        assertEquals(1, result.plateCount)
+        assertNotNull(result.plateCountError)
+        assertNull(result.settingsError)
+        assertEquals("0.28", result.settings!!.process["layer_height"])
+        assertEquals("220", result.settings.filaments.single()["nozzle_temperature"])
+    }
+
+    @Test fun settingsFailureDoesNotChangeValidPlateCount() {
+        val failure = IOException("bad settings")
+        val result = ru.ytkab0bp.slicebeam.ThreeMfImportStages.read(
+            countPlates = { 36 }, readSettings = { throw failure },
+        )
+        assertEquals(36, result.plateCount)
+        assertNull(result.plateCountError)
+        assertSame(failure, result.settingsError)
     }
 
     @Test fun missingOnlyProfileReferenceIsStillReported() {

@@ -91,21 +91,27 @@ object ThreeMfProjectSettingsReader {
             }
         }
 
-        fun resolve(id: String, profiles: Map<String, Map<String, List<String>>>, installed: Map<String, Map<String, String>>, seen: Set<String> = emptySet()): Map<String, List<String>> {
+        fun resolve(id: String, profiles: Map<String, Map<String, List<String>>>, installed: Map<String, Map<String, String>>,
+                    allowedKeys: Set<String>, embeddedFallback: Boolean, seen: Set<String> = emptySet()): Map<String, List<String>> {
             if (id in seen) return emptyMap()
             val local = profiles[id]
             if (local == null) {
                 val saved = installed[id]
-                if (saved == null && id.isNotBlank()) missingProfiles.add(id)
+                // Desktop exports commonly contain flattened values and names of system presets
+                // unavailable on mobile. Warn only when there are no usable embedded overrides.
+                if (saved == null && id.isNotBlank() && !embeddedFallback) missingProfiles.add(id)
                 return saved?.mapValues { (key, value) -> TemporaryProjectSettings.splitValue(value, definitions[ConfigObject.migrateKey(key)]?.type) }.orEmpty()
             }
             val parent = local["inherits"]?.firstOrNull().orEmpty()
-            return (if (parent.isNotEmpty()) resolve(parent, profiles, installed, seen + id) else emptyMap()) + local
+            val hasOverrides = embeddedFallback || local.keys.any { ConfigObject.migrateKey(it) in allowedKeys &&
+                definitions[ConfigObject.migrateKey(it)] != null }
+            return (if (parent.isNotEmpty()) resolve(parent, profiles, installed, allowedKeys, hasOverrides, seen + id) else emptyMap()) + local
         }
 
         val process = LinkedHashMap<String, String>()
         val selectedProcess = processId.ifBlank { processProfiles.keys.firstOrNull().orEmpty() }
-        val processValues = resolve(selectedProcess, processProfiles, installedProcesses) + flat
+        val processValues = resolve(selectedProcess, processProfiles, installedProcesses, processAllowed - filamentAllowed,
+            flat.keys.any { ConfigObject.migrateKey(it) in processAllowed - filamentAllowed && definitions[ConfigObject.migrateKey(it)] != null }) + flat
         for ((rawKey, values) in processValues) {
             val key = ConfigObject.migrateKey(rawKey)
             if (key !in processAllowed || key in filamentAllowed || definitions[key] == null || values.isEmpty()) continue
@@ -124,7 +130,8 @@ object ThreeMfProjectSettingsReader {
         val selfIndices = flat["filament_self_index"].orEmpty()
         val variants = flat["filament_extruder_variant"].orEmpty()
         val filaments = (0 until logicalCount).map { index ->
-            val inherited = ids.getOrNull(index)?.let { resolve(it, filamentProfiles, installedFilaments) }.orEmpty()
+            val inherited = ids.getOrNull(index)?.let { resolve(it, filamentProfiles, installedFilaments, filamentAllowed,
+                fileFilamentValues.keys.any { key -> definitions[ConfigObject.migrateKey(key)] != null }) }.orEmpty()
             val row = LinkedHashMap<String, String>()
             for ((rawKey, values) in inherited + fileFilamentValues) {
                 val key = ConfigObject.migrateKey(rawKey)
