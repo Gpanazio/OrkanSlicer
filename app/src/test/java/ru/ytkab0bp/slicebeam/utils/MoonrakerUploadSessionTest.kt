@@ -43,6 +43,7 @@ class MoonrakerUploadSessionTest {
         t.statusResult(response("""{"result":{"status":{"print_stats":{"state":"printing","filename":"other/job.gcode"}}}}"""))
         assertEquals(MoonrakerUploadSession.Kind.START_UNCERTAIN, outcome?.kind)
         assertEquals(1, t.starts); assertEquals(1, t.queries)
+        assertEquals("printing", outcome?.printerState)
     }
     @Test fun wrongFileEmbeddedErrorEmptyAndNullResponsesNeverStart() {
         for (r in listOf(response("""{"result":{"item":{"root":"gcodes","path":"wrong.gcode"}}}"""),

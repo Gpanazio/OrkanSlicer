@@ -56,11 +56,15 @@ object PrinterResponseInspector {
 
     /** A timed-out start request is ambiguous: the printer may already be printing. */
     @JvmStatic
-    fun printStartFailureDetail(body: ByteArray?, fallback: String?): String {
-        embeddedError(body)?.let { return limit("@upload_start_rejected $it") }
+    fun printStartFailureDetail(body: ByteArray?, fallback: String?, printerState: String? = null): String {
+        val rejected = embeddedError(body)
         val cause = failureDetail(body, fallback).takeIf { it.isNotBlank() }
-        val message = "@upload_start_uncertain"
-        return limit(if (cause == null) message else "$message $cause")
+        val message = if (rejected != null) "@upload_start_rejected $rejected"
+            else if (cause == null) "@upload_start_uncertain" else "@upload_start_uncertain $cause"
+        val observed = printerState?.filter { !it.isISOControl() }?.take(120)?.takeIf { it.isNotBlank() }
+        // Leave room for the observed state even when a host returns a very long error.
+        return if (observed == null) limit(message)
+            else "${message.take(340)} @upload_printer_state $observed"
     }
 
     private fun parseObject(body: ByteArray?): JsonObject? {

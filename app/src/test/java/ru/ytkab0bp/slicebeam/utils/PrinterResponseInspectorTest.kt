@@ -82,4 +82,11 @@ class PrinterResponseInspectorTest {
         assertTrue(PrinterResponseInspector.failureDetail(huge, "fallback").contains("@upload_response_large"))
         assertTrue(PrinterResponseInspector.missingAcknowledgement(huge, "fallback").contains("@upload_api_html"))
     }
+    @Test fun uncertainMessageIsSingleAndIncludesObservedPrinterState() {
+        assertEquals("@upload_start_uncertain @upload_printer_state standby",
+            PrinterResponseInspector.printStartFailureDetail(null, null, "standby"))
+        assertEquals("@upload_start_uncertain timeout @upload_printer_state printing",
+            PrinterResponseInspector.printStartFailureDetail(null, "timeout", "printing"))
+    }
+
 }

@@ -11,7 +11,7 @@ class MoonrakerUploadSession(
 ) {
     data class Response(val body: ByteArray?, val error: Throwable? = null, val status: Int = 200)
     enum class Kind { UPLOADED, STARTED, QUEUED, UPLOAD_FAILED, FILE_NOT_CONFIRMED, START_UNCERTAIN }
-    data class Outcome(val kind: Kind, val response: Response)
+    data class Outcome(val kind: Kind, val response: Response, val printerState: String? = null)
     interface Transport {
         fun upload(callback: (Response) -> Unit)
         fun start(path: String, callback: (Response) -> Unit)
@@ -57,17 +57,18 @@ class MoonrakerUploadSession(
         try {
             transport.status { status ->
                 if (!reconciled.compareAndSet(false, true)) return@status
-                val confirmed = status.error == null && status.status in 200..299 &&
-                    PrinterResponseInspector.embeddedError(status.body) == null &&
-                    MoonrakerResponseInspector.printStatus(status.body)?.confirmsStartedFile(path) == true
-                complete(if (confirmed) Kind.STARTED else Kind.START_UNCERTAIN, response)
+                val printStatus = if (status.error == null && status.status in 200..299 &&
+                    PrinterResponseInspector.embeddedError(status.body) == null)
+                    MoonrakerResponseInspector.printStatus(status.body) else null
+                val confirmed = printStatus?.confirmsStartedFile(path) == true
+                complete(if (confirmed) Kind.STARTED else Kind.START_UNCERTAIN, response, printStatus?.state)
             }
         } catch (error: RuntimeException) {
             complete(Kind.START_UNCERTAIN, Response(null, error, 0))
         }
     }
 
-    private fun complete(kind: Kind, response: Response) {
-        if (finished.compareAndSet(false, true)) finish(Outcome(kind, response))
+    private fun complete(kind: Kind, response: Response, printerState: String? = null) {
+        if (finished.compareAndSet(false, true)) finish(Outcome(kind, response, printerState))
     }
 }

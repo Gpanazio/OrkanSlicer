@@ -2,7 +2,6 @@
 <resources>
   <string name="SliceAlreadyRunning">Slicing is already in progress. Wait for it to finish, then try again.</string>
   <string name="UploadSliceMissing">The slice is no longer available. Slice the model again before sending it.</string>
-  <string name="UploadPrinterAlreadyStarted">The printer has already started this job.</string>
   <string name="UploadPrinterQueued">The printer has queued this job.</string>
   <string name="UploadFileNotConfirmed">The printer did not confirm the uploaded file. Check its file list before sending again.</string>
   <string name="UploadStillProcessing">File received. The printer is still processing it.</string>
@@ -12,6 +11,7 @@
   <string name="UploadInvalidAddress">The printer address is invalid. Check the hostname and port.</string>
   <string name="UploadCheckingStatus">Checking printer status once…</string>
   <string name="UploadStartUncertain">Print start was not confirmed. No further start command was sent. Check the printer before trying again.</string>
+  <string name="UploadPrinterState">Observed printer state:</string>
   <string name="UploadApiHtml">The printer address returned a web page instead of an API response. Check the host type and port.</string>
   <string name="UploadPrinterError">The printer reported an error.</string>
   <string name="UploadRejected">The printer rejected the request.</string>

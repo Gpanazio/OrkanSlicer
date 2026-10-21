@@ -377,12 +377,13 @@ object SliceUploadController {
                     val response = outcome.response
                     val detail = when (outcome.kind) {
                         MoonrakerUploadSession.Kind.FILE_NOT_CONFIRMED -> text(R.string.UploadFileNotConfirmed)
-                        MoonrakerUploadSession.Kind.START_UNCERTAIN -> text(R.string.UploadStartUncertain)
+                        MoonrakerUploadSession.Kind.START_UNCERTAIN -> response.error?.localizedMessage
                         else -> response.error?.localizedMessage
                     }
                     showUploadFailure(fragment, response.status, response.body,
-                        IOException(detail), progress,
-                        printStartAttempt = outcome.kind == MoonrakerUploadSession.Kind.START_UNCERTAIN)
+                        detail?.let(::IOException), progress,
+                        printStartAttempt = outcome.kind == MoonrakerUploadSession.Kind.START_UNCERTAIN,
+                        printerState = outcome.printerState)
                 }
             }
         }
@@ -431,6 +432,7 @@ object SliceUploadController {
             "@upload_response_large" to R.string.UploadResponseLarge,
             "@upload_start_rejected" to R.string.UploadStartRejected,
             "@upload_start_uncertain" to R.string.UploadStartUncertain,
+            "@upload_printer_state" to R.string.UploadPrinterState,
         )
         messages.forEach { (key, id) -> result = result.replace(key, text(id)) }
         return result
@@ -443,10 +445,11 @@ object SliceUploadController {
         error: Throwable?,
         progress: ProgressDialog,
         printStartAttempt: Boolean = false,
+        printerState: String? = null,
     ) {
         dismissSendProgress(progress)
         val detail = if (printStartAttempt)
-            PrinterResponseInspector.printStartFailureDetail(responseBody, error?.localizedMessage ?: error?.toString())
+            PrinterResponseInspector.printStartFailureDetail(responseBody, error?.localizedMessage ?: error?.toString(), printerState)
         else PrinterResponseInspector.failureDetail(responseBody, error?.localizedMessage ?: error?.toString())
         ViewUtils.postOnMainThread {
             val context = fragment.getContext() ?: return@postOnMainThread
