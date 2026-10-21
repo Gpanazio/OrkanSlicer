@@ -14,6 +14,7 @@ data class ThreeMfProjectSettings(
     val filamentTitles: List<String> = emptyList(),
     val ignoredValues: Int = 0,
     val invalidValues: List<ProfileConfigLoadWarning.InvalidValue> = emptyList(),
+    val missingProfileIds: List<String> = emptyList(),
 ) {
     val hasSettings: Boolean get() = process.isNotEmpty() || filaments.any { it.isNotEmpty() }
 }

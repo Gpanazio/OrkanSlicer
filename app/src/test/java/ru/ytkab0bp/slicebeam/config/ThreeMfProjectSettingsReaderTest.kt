@@ -110,6 +110,7 @@ class ThreeMfProjectSettingsReaderTest {
         assertEquals("4", result.process["wall_loops"])
         assertEquals(listOf("220", "230"), result.filaments.map { it["nozzle_temperature"] })
         assertEquals("0.02", result.filaments[1]["pressure_advance"])
+        assertTrue(result.missingProfileIds.isEmpty())
     }
 
     @Test fun inheritanceCyclesAndAbsentParentsStillKeepLocalValues() {
@@ -119,6 +120,25 @@ class ThreeMfProjectSettingsReaderTest {
         ))
         assertEquals("0.2", result.process["layer_height"])
         assertEquals("3", result.process["wall_loops"])
+        assertTrue(result.missingProfileIds.isEmpty())
+    }
+
+    @Test fun missingParentProfilesAreNamedWithoutDroppingLocalSettings() {
+        val result = read(mapOf(
+            "Metadata/process_settings_1.config" to """{"name":"Child","inherits":"Absent process","wall_loops":"4"}""",
+            "Metadata/filament_settings_1.config" to """{"name":"Blue","inherits":"Absent PLA","nozzle_temperature":["220"]}""",
+            "Metadata/project_settings.config" to """{"print_settings_id":"Child","filament_settings_id":["Blue"],"layer_height":"0.28"}""",
+        ))
+        assertEquals(listOf("Absent process", "Absent PLA"), result.missingProfileIds)
+        assertEquals("4", result.process["wall_loops"])
+        assertEquals("220", result.filaments.single()["nozzle_temperature"])
+    }
+
+    @Test fun missingOnlyProfileReferenceIsStillReported() {
+        val result = read(mapOf("Metadata/project_settings.config" to
+            """{"print_settings_id":"Unavailable preset"}"""))
+        assertFalse(result.hasSettings)
+        assertEquals(listOf("Unavailable preset"), result.missingProfileIds)
     }
 
     @Test fun invalidNumericValuesAreDroppedWithoutLosingValidSettings() {
@@ -142,6 +162,20 @@ class ThreeMfProjectSettingsReaderTest {
 
     @Test(expected = IOException::class) fun oversizedSettingsAreBoundedEvenWhenHighlyCompressed() {
         read(mapOf("Metadata/project_settings.config" to " ".repeat(8 * 1024 * 1024 + 1)))
+    }
+
+    @Test fun manyUnrelated3mfAssetsDoNotCountAsSettings() {
+        val entries = LinkedHashMap<String, String>()
+        repeat(300) { entries["Metadata/plate_${it + 1}.png"] = "thumbnail" }
+        entries["Metadata/project_settings.config"] = """{"layer_height":"0.24"}"""
+        assertEquals("0.24", read(entries).process["layer_height"])
+    }
+
+    @Test(expected = IOException::class) fun excessiveSettingsEntriesAreRejectedBeforeParsing() {
+        val entries = (0..256).associate { index ->
+            "Metadata/filament_settings_$index.config" to """{"name":"Filament $index"}"""
+        }
+        read(entries)
     }
 
     private fun option(key: String, type: ru.ytkab0bp.slicebeam.slic3r.ConfigOptionDef.ConfigOptionType,

@@ -586,15 +586,19 @@ private class Project3mfImportResult {
 internal var importedProfiles:Int = 0
 internal var plateCount:Int = 1
 internal var settings: ThreeMfProjectSettings? = null
+internal var settingsError:Boolean = false
+internal var missingProfileIds:List<String> = emptyList()
 }
 @Throws(IOException::class)
 private fun readZipEntryText(zip:ZipFile, entry:ZipEntry):String {
+if (entry.size > 8L * 1024 * 1024) throw IOException("3MF plate metadata exceeds the size limit")
 zip.getInputStream(entry).use({ `in`-> ByteArrayOutputStream().use({ out->
 val buffer = ByteArray(10240)
 while (true)
 {
 val c = `in`.read(buffer)
 if (c == -1) break
+if (out.size().toLong() + c > 8L * 1024 * 1024) throw IOException("3MF plate metadata exceeds the size limit")
 out.write(buffer, 0, c)
 }
 return out.toString("UTF-8") }) })
@@ -749,6 +753,7 @@ val read = ThreeMfProjectSettingsReader.read(file, PrintConfigDef.getInstance().
     config.printConfigs.associate { it.title.orEmpty() to HashMap(it.values) },
     config.filamentConfigs.associate { it.title.orEmpty() to HashMap(it.values) },
     preferredExtruderVariant = config.findPrinter(config.presets?.get("printer"))?.get("extruder_variant")?.substringBefore(','))
+result.missingProfileIds = read.missingProfileIds
 val fallback = Prefs.getStoredFilamentSlots()
 val projectFilaments = read.filaments.ifEmpty { fallback.map { emptyMap<String, String>() } }
 result.settings = if (!read.hasSettings) null else read.copy(filaments = projectFilaments.mapIndexed { index, values ->
@@ -759,6 +764,7 @@ result.settings = if (!read.hasSettings) null else read.copy(filaments = project
 catch (e:Exception) {
 // Geometry loading should still proceed for a valid 3MF even when embedded settings are absent
  // or too new for the mobile converter.
+ result.settingsError = true
  Log.w("MainActivity", "Failed to import embedded 3MF profiles from " + file, e)
 }
 return result
@@ -1366,6 +1372,15 @@ ViewUtils.postOnMainThread {
     projectImport.settings?.ignoredValues?.takeIf { it > 0 }?.let { count ->
         SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(SnackbarsLayout.Type.WARNING,
             getString(R.string.ProjectSettingsInvalidValues, count)))
+    }
+    projectImport.missingProfileIds.takeIf { it.isNotEmpty() }?.let { ids ->
+        val names = ids.take(3).joinToString(", ") { it.take(60) } + if (ids.size > 3) " …" else ""
+        SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(SnackbarsLayout.Type.WARNING,
+            getString(R.string.ProjectSettingsMissingProfiles, names)))
+    }
+    if (projectImport.settingsError) {
+        SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(SnackbarsLayout.Type.WARNING,
+            R.string.ProjectSettingsImportFailed))
     }
 }
 }
