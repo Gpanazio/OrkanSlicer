@@ -1,0 +1,20 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+  <string name="UploadSliceMissing">The slice is no longer available. Slice the model again before sending it.</string>
+  <string name="UploadPrinterAlreadyStarted">The printer has already started this job.</string>
+  <string name="UploadPrinterQueued">The printer has queued this job.</string>
+  <string name="UploadFileNotConfirmed">The printer did not confirm the uploaded file. Check its file list before sending again.</string>
+  <string name="UploadStillProcessing">File received. The printer is still processing it.</string>
+  <string name="UploadSelectedNotStarted">File uploaded and selected, but the printer did not confirm the print start.</string>
+  <string name="UploadPrintNotStarted">File uploaded, but the printer did not confirm a print start. Check its status.</string>
+  <string name="UploadAlreadyActive">An upload or print start is already in progress for this printer. Wait for it to finish.</string>
+  <string name="UploadInvalidAddress">The printer address is invalid. Check the hostname and port.</string>
+  <string name="UploadCheckingStatus">Checking printer status once…</string>
+  <string name="UploadStartUncertain">Print start was not confirmed. No further start command was sent. Check the printer before trying again.</string>
+  <string name="UploadApiHtml">The printer address returned a web page instead of an API response. Check the host type and port.</string>
+  <string name="UploadPrinterError">The printer reported an error.</string>
+  <string name="UploadRejected">The printer rejected the request.</string>
+  <string name="UploadResponseLarge">The printer response is too large. Check the host type and port.</string>
+  <string name="UploadStartRejected">Print start was rejected.</string>
+  <string name="UploadSnapshotFailed">Could not create a private copy of the sliced file for upload.</string>
+</resources>

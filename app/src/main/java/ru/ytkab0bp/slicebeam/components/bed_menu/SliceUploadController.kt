@@ -22,7 +22,6 @@ import com.loopj.android.http.RequestParams
 import cz.msebera.android.httpclient.Header
 import cz.msebera.android.httpclient.entity.ContentType
 import cz.msebera.android.httpclient.message.BasicHeader
-import org.json.JSONException
 import org.json.JSONObject
 import ru.ytkab0bp.slicebeam.BuildConfig
 import ru.ytkab0bp.slicebeam.R
@@ -36,7 +35,13 @@ import ru.ytkab0bp.slicebeam.utils.AnycubicGCodeProcessor
 import ru.ytkab0bp.slicebeam.utils.GCodeIntegrityValidator
 import ru.ytkab0bp.slicebeam.utils.IOUtils
 import ru.ytkab0bp.slicebeam.utils.MmuFilamentSync
+import ru.ytkab0bp.slicebeam.utils.MoonrakerResponseInspector
+import ru.ytkab0bp.slicebeam.utils.MoonrakerUploadSession
+import ru.ytkab0bp.slicebeam.utils.OctoPrintResponseInspector
 import ru.ytkab0bp.slicebeam.utils.Prefs
+import ru.ytkab0bp.slicebeam.utils.PrinterResponseInspector
+import ru.ytkab0bp.slicebeam.utils.PrinterUploadReservation
+import ru.ytkab0bp.slicebeam.utils.PrinterUploadUrl
 import ru.ytkab0bp.slicebeam.utils.QidiGCode3mfPackager
 import ru.ytkab0bp.slicebeam.utils.UploadFileValidator
 import ru.ytkab0bp.slicebeam.utils.ViewUtils
@@ -45,15 +50,26 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.IOException
-import java.nio.charset.StandardCharsets
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 /** Owns the complete post-slice file preparation, validation and printer upload flow. */
 object SliceUploadController {
+    /** One in-flight send/start per printer, including file preparation and upload. */
+    private val activeUploadHosts = PrinterUploadReservation()
+    private val uploadReservations = ConcurrentHashMap<ProgressDialog, String>()
+    private val uploadSnapshots = ConcurrentHashMap<ProgressDialog, File>()
     private val client = AsyncHttpClient().apply {
-        setLoggingEnabled(true)
+        setLoggingEnabled(false)
         // Moonraker on Kobra 3 can preprocess uploaded G-code before responding.
         setTimeout(300000)
+        setConnectTimeout(15000)
+        setMaxRetriesAndTimeout(0, 10000)
+    }
+    private val printStartClient = AsyncHttpClient().apply {
+        setLoggingEnabled(false)
+        // Uploads may take minutes; a print-start acknowledgement should not.
+        setTimeout(30000)
         setConnectTimeout(15000)
         setMaxRetriesAndTimeout(0, 10000)
     }
@@ -68,7 +84,21 @@ object SliceUploadController {
         printer: ConfigObject,
     ) {
         val context = fragment.getContext() ?: return
-        val progress = ProgressDialog(context).apply {
+        val slicedResult = fragment.glView?.renderer?.gcodeResult
+        if (!fragment.hasSliceResult() || slicedResult == null || SliceBeam.CONFIG?.presets?.get("printer") != printer.title) {
+            showPreparationFailure(fragment, context.getString(R.string.UploadSliceMissing))
+            return
+        }
+        if (PrinterUploadUrl.baseUrl(host) == null) {
+            showPreparationFailure(fragment, text(R.string.UploadInvalidAddress))
+            return
+        }
+        val reservation = activeUploadHosts.reserve(host)
+        if (reservation == null) {
+            showPreparationFailure(fragment, text(R.string.UploadAlreadyActive))
+            return
+        }
+        val progress = try { ProgressDialog(context).apply {
             setTitle(R.string.MenuSliceSendToPrinterLoading)
             setMessage(context.getString(R.string.UploadPreparingGcode))
             setProgressStyle(ProgressDialog.STYLE_HORIZONTAL)
@@ -76,7 +106,13 @@ object SliceUploadController {
             setCancelable(false)
             show()
         }
-        val name = fragment.glView!!.renderer.gcodeResult!!.getRecommendedName()
+        } catch (error: RuntimeException) {
+            activeUploadHosts.release(reservation)
+            showPreparationFailure(fragment, error.localizedMessage)
+            return
+        }
+        uploadReservations[progress] = reservation
+        val name = slicedResult.getRecommendedName()
         val source = BedFragment.tempGCodePath
         val currentModel: Model? = fragment.currentModel
         val modelInstances = currentModel?.objectsCount?.coerceAtLeast(1) ?: 1
@@ -87,13 +123,20 @@ object SliceUploadController {
             var uploadFile: File? = null
             var preparationError: Exception? = null
             var integrityFailure: GCodeIntegrityValidator.Result? = null
-            val sourceCheck = GCodeIntegrityValidator.validate(source)
-            if (!sourceCheck.isValid()) {
-                integrityFailure = sourceCheck
-            } else {
-                try {
-                    uploadFile = if (qidiQ2) prepareQidiUpload(source, printer, preview, uploadName)
-                    else prepareAnycubicUpload(source, printer, modelInstances, fragment, preview)
+            try {
+                // The slicer may rewrite its shared temporary file while HTTP is still streaming.
+                // Each send owns a private directory until its terminal callback.
+                val directory = File.createTempFile("upload_", ".tmp", source.parentFile)
+                if (!directory.delete() || !directory.mkdir()) throw IOException(text(R.string.UploadSnapshotFailed))
+                uploadSnapshots[progress] = directory
+                val snapshot = File(directory, source.name)
+                source.copyTo(snapshot)
+                val sourceCheck = GCodeIntegrityValidator.validate(snapshot)
+                if (!sourceCheck.isValid()) {
+                    integrityFailure = sourceCheck
+                } else {
+                    uploadFile = if (qidiQ2) prepareQidiUpload(snapshot, printer, preview, uploadName)
+                    else prepareAnycubicUpload(snapshot, printer, modelInstances, fragment, preview)
                     if (uploadFile != null) {
                         if (qidiQ2) {
                             if (!QidiGCode3mfPackager.verify(uploadFile!!)) {
@@ -108,10 +151,10 @@ object SliceUploadController {
                             }
                         }
                     }
-                } catch (error: Exception) {
-                    preparationError = error
-                    Log.e("SliceMenu", "Could not prepare printer file for upload", error)
                 }
+            } catch (error: Exception) {
+                preparationError = error
+                Log.e("SliceMenu", "Could not prepare printer file for upload", error)
             }
             val preparedFile = uploadFile
             val failure = preparationError
@@ -119,6 +162,10 @@ object SliceUploadController {
             ViewUtils.postOnMainThread {
                 if (fragment.getContext() == null) {
                     dismissSendProgress(progress)
+                } else if (!fragment.hasSliceResult() || fragment.glView?.renderer?.gcodeResult !== slicedResult ||
+                    SliceBeam.CONFIG?.presets?.get("printer") != printer.title) {
+                    dismissSendProgress(progress)
+                    showPreparationFailure(fragment, text(R.string.UploadSliceMissing))
                 } else if (invalidGcode != null) {
                     dismissSendProgress(progress)
                     showGCodeIntegrityFailure(fragment, invalidGcode)
@@ -172,9 +219,10 @@ object SliceUploadController {
             return
         }
 
-        var uploadHost = host
-        if (!uploadHost.startsWith("http://") && !uploadHost.startsWith("https://")) {
-            uploadHost = "http://$uploadHost"
+        val uploadUrl = PrinterUploadUrl.endpoint(host, "/api/files/local")
+        if (uploadUrl == null) {
+            showUploadFailure(fragment, 0, null, IOException(text(R.string.UploadInvalidAddress)), progress)
+            return
         }
         val headers: Array<Header> = if (TextUtils.isEmpty(apiKey)) emptyArray()
         else arrayOf(BasicHeader("X-Api-Key", apiKey))
@@ -194,30 +242,40 @@ object SliceUploadController {
         params.put("select", print.toString())
         params.put("print", print.toString())
 
+        try {
         client.post(
             SliceBeam.requireInstance(),
-            "$uploadHost/api/files/local",
+            uploadUrl,
             headers,
             params,
             null,
             object : AsyncHttpResponseHandler() {
-                override fun onSuccess(statusCode: Int, headers: Array<Header>, responseBody: ByteArray) {
-                    try {
-                        val response = JSONObject(String(responseBody, StandardCharsets.UTF_8))
-                        if (!response.has("action") && !response.has("files")) {
-                            throw JSONException(response.toString())
-                        }
-                        dismissSendProgress(progress)
-                        SliceBeam.EVENT_BUS.fireEvent(
-                            NeedSnackbarEvent(
-                                if (print) SnackbarsLayout.Type.INFO else SnackbarsLayout.Type.DONE,
-                                if (print) R.string.MenuSliceSendToPrinterPrintStarted
-                                else R.string.MenuSliceSendToPrinterOK,
-                            ),
-                        )
-                    } catch (error: JSONException) {
-                        onFailure(statusCode, headers, responseBody, error)
+                override fun onSuccess(statusCode: Int, headers: Array<Header>?, responseBody: ByteArray?) {
+                    PrinterResponseInspector.embeddedError(responseBody)?.let { detail ->
+                        showUploadFailure(fragment, 0, responseBody, IOException(detail), progress)
+                        return
                     }
+                    val acknowledgement = OctoPrintResponseInspector.uploadedFile(responseBody)
+                    if (acknowledgement == null) {
+                        showUploadFailure(fragment, 0, null,
+                            IOException(SliceBeam.requireInstance().getString(R.string.UploadFileNotConfirmed)), progress)
+                        return
+                    }
+                    dismissSendProgress(progress)
+                    val outcome = acknowledgement.outcome(print)
+                    val message = when (outcome) {
+                        OctoPrintResponseInspector.UploadOutcome.PRINT_STARTED -> R.string.MenuSliceSendToPrinterPrintStarted
+                        OctoPrintResponseInspector.UploadOutcome.SELECTED_NOT_STARTED -> R.string.UploadSelectedNotStarted
+                        OctoPrintResponseInspector.UploadOutcome.PRINT_NOT_STARTED -> R.string.UploadPrintNotStarted
+                        OctoPrintResponseInspector.UploadOutcome.PROCESSING -> R.string.UploadStillProcessing
+                        OctoPrintResponseInspector.UploadOutcome.UPLOADED -> R.string.MenuSliceSendToPrinterOK
+                    }
+                    SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(
+                        if (outcome == OctoPrintResponseInspector.UploadOutcome.PRINT_STARTED ||
+                            outcome == OctoPrintResponseInspector.UploadOutcome.UPLOADED)
+                            SnackbarsLayout.Type.DONE else SnackbarsLayout.Type.INFO,
+                        message,
+                    ))
                 }
 
                 override fun onProgress(bytesWritten: Long, totalSize: Long) {
@@ -226,14 +284,17 @@ object SliceUploadController {
 
                 override fun onFailure(
                     statusCode: Int,
-                    headers: Array<Header>,
-                    responseBody: ByteArray,
-                    error: Throwable,
+                    headers: Array<Header>?,
+                    responseBody: ByteArray?,
+                    error: Throwable?,
                 ) {
                     showUploadFailure(fragment, statusCode, responseBody, error, progress)
                 }
             },
         )
+        } catch (error: RuntimeException) {
+            showUploadFailure(fragment, 0, null, error, progress)
+        }
     }
 
     private fun uploadMoonraker(
@@ -246,90 +307,86 @@ object SliceUploadController {
         progress: ProgressDialog,
         qidiQ2: Boolean,
     ) {
-        val uploadHost = if (host.startsWith("http://") || host.startsWith("https://")) host
-        else "http://$host"
-        val headers: Array<Header> = if (TextUtils.isEmpty(apiKey)) emptyArray()
-        else arrayOf(BasicHeader("X-Api-Key", apiKey))
-        val params = RequestParams()
-        try {
-            params.put(
-                "file", FileInputStream(uploadFile), name,
-                if (qidiQ2) ContentType.APPLICATION_OCTET_STREAM.mimeType else ContentType.TEXT_PLAIN.mimeType,
-            )
-        } catch (error: IOException) {
-            showUploadFailure(fragment, 0, null, error, progress)
-            return
-        } catch (error: RuntimeException) {
-            showUploadFailure(fragment, 0, null, error, progress)
+        val uploadUrl = PrinterUploadUrl.endpoint(host, "/server/files/upload")
+        val startUrl = PrinterUploadUrl.endpoint(host, "/printer/print/start")
+        val statusUrl = PrinterUploadUrl.endpoint(host, "/printer/objects/query?print_stats")
+        if (uploadUrl == null || startUrl == null || statusUrl == null) {
+            showUploadFailure(fragment, 0, null, IOException(text(R.string.UploadInvalidAddress)), progress)
             return
         }
-        params.put("root", "gcodes")
-        params.put("path", "")
-        client.post(
-            SliceBeam.requireInstance(),
-            "$uploadHost/server/files/upload",
-            headers,
-            params,
-            null,
-            object : AsyncHttpResponseHandler() {
-                override fun onSuccess(statusCode: Int, responseHeaders: Array<Header>, responseBody: ByteArray) {
-                    if (!print) {
-                        dismissSendProgress(progress)
-                        SliceBeam.EVENT_BUS.fireEvent(
-                            NeedSnackbarEvent(SnackbarsLayout.Type.DONE, R.string.MenuSliceSendToPrinterOK),
-                        )
-                        return
-                    }
-                    ViewUtils.postOnMainThread {
-                        progress.setMessage(SliceBeam.requireInstance().getString(R.string.UploadPrinterProcessing))
-                    }
-                    val startParams = RequestParams().apply {
-                        put("filename", name)
-                        if (qidiQ2) put("plateindex", "1")
-                    }
-                    client.post(
-                        SliceBeam.requireInstance(),
-                        "$uploadHost/printer/print/start",
-                        headers,
-                        startParams,
-                        null,
-                        object : AsyncHttpResponseHandler() {
-                            override fun onSuccess(code: Int, headers: Array<Header>, body: ByteArray) {
-                                dismissSendProgress(progress)
-                                SliceBeam.EVENT_BUS.fireEvent(
-                                    NeedSnackbarEvent(
-                                        SnackbarsLayout.Type.INFO,
-                                        R.string.MenuSliceSendToPrinterPrintStarted,
-                                    ),
-                                )
-                            }
-
-                            override fun onFailure(
-                                code: Int,
-                                headers: Array<Header>,
-                                body: ByteArray,
-                                error: Throwable,
-                            ) {
-                                showUploadFailure(fragment, code, body, error, progress)
-                            }
-                        },
-                    )
+        val headers: Array<Header> = if (TextUtils.isEmpty(apiKey)) emptyArray()
+        else arrayOf(BasicHeader("X-Api-Key", apiKey))
+        fun handler(callback: (MoonrakerUploadSession.Response) -> Unit) = object : AsyncHttpResponseHandler() {
+            override fun onSuccess(code: Int, responseHeaders: Array<Header>?, body: ByteArray?) {
+                callback(MoonrakerUploadSession.Response(body, status = code))
+            }
+            override fun onFailure(code: Int, responseHeaders: Array<Header>?, body: ByteArray?, error: Throwable?) {
+                callback(MoonrakerUploadSession.Response(body, error ?: IOException("HTTP $code"), code))
+            }
+            override fun onProgress(written: Long, total: Long) {
+                updateSendProgress(fragment, progress, written, total)
+            }
+        }
+        val session = MoonrakerUploadSession(name, print, object : MoonrakerUploadSession.Transport {
+            override fun upload(callback: (MoonrakerUploadSession.Response) -> Unit) {
+                val params = RequestParams()
+                try {
+                    params.put("file", FileInputStream(uploadFile), name,
+                        if (qidiQ2) ContentType.APPLICATION_OCTET_STREAM.mimeType else ContentType.TEXT_PLAIN.mimeType)
+                    params.put("root", "gcodes")
+                    params.put("path", "")
+                    client.post(SliceBeam.requireInstance(), uploadUrl, headers, params, null, handler(callback))
+                } catch (error: IOException) {
+                    callback(MoonrakerUploadSession.Response(null, error, 0))
                 }
-
-                override fun onProgress(bytesWritten: Long, totalSize: Long) {
-                    updateSendProgress(fragment, progress, bytesWritten, totalSize)
+            }
+            override fun start(path: String, callback: (MoonrakerUploadSession.Response) -> Unit) {
+                progress.setMessage(text(R.string.UploadPrinterProcessing))
+                val params = RequestParams().apply {
+                    put("filename", path)
+                    if (qidiQ2) put("plateindex", "1")
                 }
-
-                override fun onFailure(
-                    statusCode: Int,
-                    responseHeaders: Array<Header>,
-                    responseBody: ByteArray,
-                    error: Throwable,
-                ) {
-                    showUploadFailure(fragment, statusCode, responseBody, error, progress)
+                printStartClient.post(SliceBeam.requireInstance(), startUrl, headers, params, null, handler(callback))
+            }
+            override fun status(callback: (MoonrakerUploadSession.Response) -> Unit) {
+                progress.setMessage(text(R.string.UploadCheckingStatus))
+                val statusClient = AsyncHttpClient().apply {
+                    setLoggingEnabled(false)
+                    setTimeout(10_000)
+                    setConnectTimeout(5_000)
+                    setMaxRetriesAndTimeout(0, 5_000)
                 }
-            },
-        )
+                statusClient.get(SliceBeam.requireInstance(), statusUrl, headers, null, handler(callback))
+            }
+        }) { outcome ->
+            when (outcome.kind) {
+                MoonrakerUploadSession.Kind.UPLOADED,
+                MoonrakerUploadSession.Kind.STARTED,
+                MoonrakerUploadSession.Kind.QUEUED -> {
+                    dismissSendProgress(progress)
+                    val message = when (outcome.kind) {
+                        MoonrakerUploadSession.Kind.UPLOADED -> R.string.MenuSliceSendToPrinterOK
+                        MoonrakerUploadSession.Kind.QUEUED -> R.string.UploadPrinterQueued
+                        else -> R.string.MenuSliceSendToPrinterPrintStarted
+                    }
+                    SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(
+                        if (outcome.kind == MoonrakerUploadSession.Kind.UPLOADED) SnackbarsLayout.Type.DONE
+                        else SnackbarsLayout.Type.INFO, message))
+                }
+                else -> {
+                    val response = outcome.response
+                    val detail = when (outcome.kind) {
+                        MoonrakerUploadSession.Kind.FILE_NOT_CONFIRMED -> text(R.string.UploadFileNotConfirmed)
+                        MoonrakerUploadSession.Kind.START_UNCERTAIN -> text(R.string.UploadStartUncertain)
+                        else -> response.error?.localizedMessage
+                    }
+                    showUploadFailure(fragment, response.status, response.body,
+                        IOException(detail), progress,
+                        printStartAttempt = outcome.kind == MoonrakerUploadSession.Kind.START_UNCERTAIN)
+                }
+            }
+        }
+        session.run()
     }
 
     private fun updateSendProgress(
@@ -356,9 +413,27 @@ object SliceUploadController {
     }
 
     private fun dismissSendProgress(progress: ProgressDialog) {
+        uploadReservations.remove(progress)?.let(activeUploadHosts::release)
+        uploadSnapshots.remove(progress)?.let { directory -> IOUtils.IO_POOL.execute { directory.deleteRecursively() } }
         ViewUtils.postOnMainThread {
             if (progress.isShowing) progress.dismiss()
         }
+    }
+
+    private fun text(id: Int): String = SliceBeam.requireInstance().getString(id)
+
+    private fun localizedDetail(detail: String): String {
+        var result = detail
+        val messages = mapOf(
+            "@upload_api_html" to R.string.UploadApiHtml,
+            "@upload_printer_error" to R.string.UploadPrinterError,
+            "@upload_rejected" to R.string.UploadRejected,
+            "@upload_response_large" to R.string.UploadResponseLarge,
+            "@upload_start_rejected" to R.string.UploadStartRejected,
+            "@upload_start_uncertain" to R.string.UploadStartUncertain,
+        )
+        messages.forEach { (key, id) -> result = result.replace(key, text(id)) }
+        return result
     }
 
     private fun showUploadFailure(
@@ -367,29 +442,18 @@ object SliceUploadController {
         responseBody: ByteArray?,
         error: Throwable?,
         progress: ProgressDialog,
+        printStartAttempt: Boolean = false,
     ) {
         dismissSendProgress(progress)
-        var detail = error?.toString().orEmpty()
-        if (responseBody != null && responseBody.isNotEmpty()) {
-            try {
-                val response = JSONObject(String(responseBody, StandardCharsets.UTF_8))
-                val responseError = response.optJSONObject("error")
-                val responseMessage = responseError?.optString("message")
-                detail = if (responseError != null && !TextUtils.isEmpty(responseMessage)) {
-                    responseMessage.orEmpty()
-                } else {
-                    response.toString()
-                }
-            } catch (_: JSONException) {
-                detail = String(responseBody, StandardCharsets.UTF_8)
-            }
-        }
-        if (statusCode > 0) detail = "HTTP $statusCode: $detail"
+        val detail = if (printStartAttempt)
+            PrinterResponseInspector.printStartFailureDetail(responseBody, error?.localizedMessage ?: error?.toString())
+        else PrinterResponseInspector.failureDetail(responseBody, error?.localizedMessage ?: error?.toString())
         ViewUtils.postOnMainThread {
             val context = fragment.getContext() ?: return@postOnMainThread
             BeamAlertDialogBuilder(context)
                 .setTitle(R.string.MenuSliceSendToPrinterFailed)
-                .setMessage(detail)
+                .setMessage((if (statusCode > 0) "HTTP $statusCode: " else "") +
+                    localizedDetail(detail).ifBlank { context.getString(R.string.MenuSliceSendToPrinterFailed) })
                 .setPositiveButton(android.R.string.ok, null)
                 .show()
         }
