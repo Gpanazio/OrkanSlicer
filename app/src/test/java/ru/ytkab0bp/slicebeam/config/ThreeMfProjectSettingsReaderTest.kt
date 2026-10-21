@@ -35,6 +35,36 @@ class ThreeMfProjectSettingsReaderTest {
         } finally { file.delete() }
     }
 
+    private fun fixture(moduleRelative: String, repoRelative: String): File =
+        File(moduleRelative).takeIf(File::isFile) ?: File(repoRelative).also {
+            check(it.isFile) { "Missing 3MF test fixture: $repoRelative" }
+        }
+
+    @Test fun bundledTwoColorProjectKeepsMaterialsButNotMachineOverrides() {
+        val project = ThreeMfProjectSettingsReader.read(
+            fixture("src/androidTest/assets/models/two-color-project.3mf",
+                "app/src/androidTest/assets/models/two-color-project.3mf"),
+            definitions, processKeys, filamentKeys,
+        )
+        assertEquals("0.24", project.process["layer_height"])
+        assertEquals(listOf("#112233", "#FFEEDD"), project.filaments.map { it["filament_colour"] })
+        assertEquals(listOf("PLA", "PETG"), project.filaments.map { it["filament_type"] })
+        assertEquals(listOf("211", "236"), project.filaments.map { it["nozzle_temperature"] })
+        assertFalse(project.process.keys.any { it in setOf("print_host", "z_offset", "nozzle_diameter", "machine_start_gcode") })
+    }
+
+    @Test fun realOrcaBenchyProjectKeepsThreeLogicalFilaments() {
+        val project = ThreeMfProjectSettingsReader.read(
+            fixture("../test_3mf/3DBenchy.3mf", "test_3mf/3DBenchy.3mf"),
+            definitions, processKeys, filamentKeys,
+        )
+        assertEquals("0.2", project.process["layer_height"])
+        assertEquals(listOf("#26A69A", "#A4C41E", "#00C1AE"),
+            project.filaments.map { it["filament_colour"] })
+        assertEquals(listOf("PLA", "PLA", "PLA"), project.filaments.map { it["filament_type"] })
+        assertFalse(project.process.containsKey("z_offset"))
+    }
+
     @Test fun threeColorsAndSixNozzleVariantsDoNotCreateExtraFilaments() {
         val result = read(mapOf("Metadata/project_settings.config" to """{
             "filament_colour":["#112233","#445566","#778899"],"filament_type":["PLA","PLA","PLA"],
