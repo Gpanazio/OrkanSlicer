@@ -8,12 +8,14 @@ import ru.ytkab0bp.slicebeam.slic3r.ConfigOptionDef.ConfigOptionType
 import java.io.File
 import java.io.IOException
 import java.io.ByteArrayOutputStream
+import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 
 /** Reads Orca/Bambu JSON and Prusa/Orca INI settings locally, without importing saved presets. */
 object ThreeMfProjectSettingsReader {
     private const val MAX_ENTRY_BYTES = 8 * 1024 * 1024
     private const val MAX_TOTAL_BYTES = 24 * 1024 * 1024
+    private const val MAX_SETTINGS_ENTRIES = 256
 
     fun read(
         file: File,
@@ -40,17 +42,24 @@ object ThreeMfProjectSettingsReader {
         var filamentIds = emptyList<String>()
         var ignored = 0
         val invalidValues = ArrayList<ProfileConfigLoadWarning.InvalidValue>()
-        var totalBytes = 0
+        val missingProfiles = LinkedHashSet<String>()
+        var totalBytes = 0L
 
         ZipFile(file).use { zip ->
-            val entries = zip.entries().asSequence().filter { !it.isDirectory }.sortedBy { it.name }.toList()
-            for (entry in entries) {
+            val entries = ArrayList<ZipEntry>()
+            val names = HashSet<String>()
+            for (entry in zip.entries().asSequence()) {
+                if (entry.isDirectory || !isSettingsEntry(entry.name)) continue
+                if (entry.size > MAX_ENTRY_BYTES) throw IOException("3MF settings entry exceeds the size limit")
+                if (!names.add(entry.name)) throw IOException("3MF contains duplicate settings entries")
+                entries.add(entry)
+                if (entries.size > MAX_SETTINGS_ENTRIES) throw IOException("3MF contains too many settings entries")
+            }
+            for (entry in entries.sortedBy { it.name }) {
                 val name = entry.name
                 val flatEntry = name in setOf("Metadata/project_settings.config", "Metadata/Slic3r_PE.config", "Metadata/OrcaSlicer.config")
                 val processEntry = name.startsWith("Metadata/process_settings_") || name.startsWith("Metadata/print_setting_")
                 val filamentEntry = name.startsWith("Metadata/filament_settings_")
-                if (!flatEntry && !processEntry && !filamentEntry) continue
-                if (!name.endsWith(".config")) continue
                 val bytes = zip.getInputStream(entry).use { input ->
                     val output = ByteArrayOutputStream()
                     val buffer = ByteArray(8192)
@@ -82,17 +91,27 @@ object ThreeMfProjectSettingsReader {
             }
         }
 
-        fun resolve(id: String, profiles: Map<String, Map<String, List<String>>>, installed: Map<String, Map<String, String>>, seen: Set<String> = emptySet()): Map<String, List<String>> {
+        fun resolve(id: String, profiles: Map<String, Map<String, List<String>>>, installed: Map<String, Map<String, String>>,
+                    allowedKeys: Set<String>, embeddedFallback: Boolean, seen: Set<String> = emptySet()): Map<String, List<String>> {
             if (id in seen) return emptyMap()
             val local = profiles[id]
-            if (local == null) return installed[id]?.mapValues { (key, value) -> TemporaryProjectSettings.splitValue(value, definitions[ConfigObject.migrateKey(key)]?.type) }.orEmpty()
+            if (local == null) {
+                val saved = installed[id]
+                // Desktop exports commonly contain flattened values and names of system presets
+                // unavailable on mobile. Warn only when there are no usable embedded overrides.
+                if (saved == null && id.isNotBlank() && !embeddedFallback) missingProfiles.add(id)
+                return saved?.mapValues { (key, value) -> TemporaryProjectSettings.splitValue(value, definitions[ConfigObject.migrateKey(key)]?.type) }.orEmpty()
+            }
             val parent = local["inherits"]?.firstOrNull().orEmpty()
-            return (if (parent.isNotEmpty()) resolve(parent, profiles, installed, seen + id) else emptyMap()) + local
+            val hasOverrides = embeddedFallback || local.keys.any { ConfigObject.migrateKey(it) in allowedKeys &&
+                definitions[ConfigObject.migrateKey(it)] != null }
+            return (if (parent.isNotEmpty()) resolve(parent, profiles, installed, allowedKeys, hasOverrides, seen + id) else emptyMap()) + local
         }
 
         val process = LinkedHashMap<String, String>()
         val selectedProcess = processId.ifBlank { processProfiles.keys.firstOrNull().orEmpty() }
-        val processValues = resolve(selectedProcess, processProfiles, installedProcesses) + flat
+        val processValues = resolve(selectedProcess, processProfiles, installedProcesses, processAllowed - filamentAllowed,
+            flat.keys.any { ConfigObject.migrateKey(it) in processAllowed - filamentAllowed && definitions[ConfigObject.migrateKey(it)] != null }) + flat
         for ((rawKey, values) in processValues) {
             val key = ConfigObject.migrateKey(rawKey)
             if (key !in processAllowed || key in filamentAllowed || definitions[key] == null || values.isEmpty()) continue
@@ -111,7 +130,8 @@ object ThreeMfProjectSettingsReader {
         val selfIndices = flat["filament_self_index"].orEmpty()
         val variants = flat["filament_extruder_variant"].orEmpty()
         val filaments = (0 until logicalCount).map { index ->
-            val inherited = ids.getOrNull(index)?.let { resolve(it, filamentProfiles, installedFilaments) }.orEmpty()
+            val inherited = ids.getOrNull(index)?.let { resolve(it, filamentProfiles, installedFilaments, filamentAllowed,
+                fileFilamentValues.keys.any { key -> definitions[ConfigObject.migrateKey(key)] != null }) }.orEmpty()
             val row = LinkedHashMap<String, String>()
             for ((rawKey, values) in inherited + fileFilamentValues) {
                 val key = ConfigObject.migrateKey(rawKey)
@@ -149,8 +169,15 @@ object ThreeMfProjectSettingsReader {
                 }
             }
         }
-        return ThreeMfProjectSettings(file.name, process, filaments, types, selectedProcess, ids, ignored, invalidValues)
+        return ThreeMfProjectSettings(file.name, process, filaments, types, selectedProcess, ids, ignored, invalidValues,
+            missingProfiles.toList())
     }
+
+    private fun isSettingsEntry(name: String): Boolean = name.endsWith(".config") && (
+        name in setOf("Metadata/project_settings.config", "Metadata/Slic3r_PE.config", "Metadata/OrcaSlicer.config") ||
+            name.startsWith("Metadata/process_settings_") || name.startsWith("Metadata/print_setting_") ||
+            name.startsWith("Metadata/filament_settings_")
+        )
 
     private fun jsonValues(obj: JsonObject): Map<String, List<String>> = obj.entrySet().mapNotNull { (rawKey, element) ->
         val values = when {

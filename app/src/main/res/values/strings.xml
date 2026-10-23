@@ -53,6 +53,8 @@
     <string name="Project3mfLoadedGeometry">3MF model loaded. No compatible project settings were included.</string>
     <string name="ProjectSettingsReslice">Settings changed while slicing. Please slice again.</string>
     <string name="ProjectSettingsInvalidValues">%1$d invalid project values were omitted. Your profiles remain unchanged.</string>
+    <string name="ProjectSettingsImportFailed">The model loaded, but its project settings could not be read. Your saved profiles remain unchanged; check the active printer and filament before slicing.</string>
+    <string name="ProjectSettingsMissingProfiles">The 3MF references missing profiles: %1$s. Check the active settings before slicing.</string>
     <string name="MakerSubtitle">Create printable models from images, text and useful everyday designs.</string>
     <string name="MakerConverters">Converters</string>
     <string name="MakerConvertersDescription">Turn images into printable models or vector art.</string>

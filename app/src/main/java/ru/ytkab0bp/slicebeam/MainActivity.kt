@@ -586,15 +586,20 @@ private class Project3mfImportResult {
 internal var importedProfiles:Int = 0
 internal var plateCount:Int = 1
 internal var settings: ThreeMfProjectSettings? = null
+internal var settingsError:Boolean = false
+internal var plateCountError:Boolean = false
+internal var missingProfileIds:List<String> = emptyList()
 }
 @Throws(IOException::class)
 private fun readZipEntryText(zip:ZipFile, entry:ZipEntry):String {
+if (entry.size > 8L * 1024 * 1024) throw IOException("3MF plate metadata exceeds the size limit")
 zip.getInputStream(entry).use({ `in`-> ByteArrayOutputStream().use({ out->
 val buffer = ByteArray(10240)
 while (true)
 {
 val c = `in`.read(buffer)
 if (c == -1) break
+if (out.size().toLong() + c > 8L * 1024 * 1024) throw IOException("3MF plate metadata exceeds the size limit")
 out.write(buffer, 0, c)
 }
 return out.toString("UTF-8") }) })
@@ -704,42 +709,18 @@ return null
 }
 @Throws(IOException::class)
 private fun countPlates(zip:ZipFile):Int {
-var maxPlate = 0
 val modelSettings = zip.getEntry("Metadata/model_settings.config")
-if (modelSettings != null)
-{
-val xml = readZipEntryText(zip, modelSettings)
-// Match actual <plate ...> elements only; the old prefix search also counted
- // the enclosing <plates> element and created a phantom empty final plate.
- val matcher = java.util.regex.Pattern.compile("<plate(?:\\s|>)").matcher(xml)
-while (matcher.find()) maxPlate++
-}
+val xml = if (modelSettings != null) readZipEntryText(zip, modelSettings) else null
+val names = ArrayList<String>()
 val entries = zip.entries()
-while (entries.hasMoreElements())
-{
-val name = entries.nextElement().getName()
-if (name.startsWith("Metadata/plate_") && (name.endsWith(".png") || name.endsWith(".json") || name.endsWith(".gcode")))
-{
-val num = name.substring("Metadata/plate_".length)
-var end = 0
-while (end < num.length && Character.isDigit(num.get(end))) end++
-if (end > 0)
-{
-try
-{
-maxPlate = Math.max(maxPlate, java.lang.Integer.parseInt(num.substring(0, end)))
-}
-catch (ignored:NumberFormatException) {}
-}
-}
-}
-return Math.max(maxPlate, 1)
+while (entries.hasMoreElements()) names.add(entries.nextElement().name)
+return ThreeMfPlateCountDetector.detect(xml, names)
 }
 private fun importEmbedded3mfProfiles(file:File):Project3mfImportResult {
 val result = Project3mfImportResult()
-try
-{
-ZipFile(file).use { result.plateCount = countPlates(it) }
+val metadata = ThreeMfImportStages.read(
+    countPlates = { ZipFile(file).use { countPlates(it) } },
+    readSettings = {
 val processKeys = Slic3rConfigWrapper.PRINT_CONFIG_KEYS.toSet() +
     ru.ytkab0bp.slicebeam.ui.settings.OrcaProcessSettingsCatalog.categories().flatMap { it.sections }.flatMap { it.keys }
 val filamentKeys = Slic3rConfigWrapper.FILAMENT_CONFIG_KEYS.toSet() +
@@ -749,17 +730,23 @@ val read = ThreeMfProjectSettingsReader.read(file, PrintConfigDef.getInstance().
     config.printConfigs.associate { it.title.orEmpty() to HashMap(it.values) },
     config.filamentConfigs.associate { it.title.orEmpty() to HashMap(it.values) },
     preferredExtruderVariant = config.findPrinter(config.presets?.get("printer"))?.get("extruder_variant")?.substringBefore(','))
+result.missingProfileIds = read.missingProfileIds
 val fallback = Prefs.getStoredFilamentSlots()
 val projectFilaments = read.filaments.ifEmpty { fallback.map { emptyMap<String, String>() } }
-result.settings = if (!read.hasSettings) null else read.copy(filaments = projectFilaments.mapIndexed { index, values ->
+if (!read.hasSettings) null else read.copy(filaments = projectFilaments.mapIndexed { index, values ->
     val slot = fallback.getOrElse(index) { fallback.last() }
     mapOf("filament_colour" to TemporaryProjectSettings.colorText(slot.color), "filament_type" to (slot.type ?: "PLA")) + values
 })
+    })
+result.plateCount = metadata.plateCount
+result.settings = metadata.settings
+metadata.plateCountError?.let {
+    result.plateCountError = true
+    Log.w("MainActivity", "Failed to count 3MF build plates from " + file, it)
 }
-catch (e:Exception) {
-// Geometry loading should still proceed for a valid 3MF even when embedded settings are absent
- // or too new for the mobile converter.
- Log.w("MainActivity", "Failed to import embedded 3MF profiles from " + file, e)
+metadata.settingsError?.let {
+    result.settingsError = true
+    Log.w("MainActivity", "Failed to import embedded 3MF profiles from " + file, it)
 }
 return result
 }
@@ -1366,6 +1353,19 @@ ViewUtils.postOnMainThread {
     projectImport.settings?.ignoredValues?.takeIf { it > 0 }?.let { count ->
         SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(SnackbarsLayout.Type.WARNING,
             getString(R.string.ProjectSettingsInvalidValues, count)))
+    }
+    projectImport.missingProfileIds.takeIf { it.isNotEmpty() }?.let { ids ->
+        val names = ids.take(3).joinToString(", ") { it.take(60) } + if (ids.size > 3) " …" else ""
+        SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(SnackbarsLayout.Type.WARNING,
+            getString(R.string.ProjectSettingsMissingProfiles, names)))
+    }
+    if (projectImport.plateCountError) {
+        SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(SnackbarsLayout.Type.WARNING,
+            R.string.ProjectPlateCountFailed))
+    }
+    if (projectImport.settingsError) {
+        SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(SnackbarsLayout.Type.WARNING,
+            R.string.ProjectSettingsImportFailed))
     }
 }
 }

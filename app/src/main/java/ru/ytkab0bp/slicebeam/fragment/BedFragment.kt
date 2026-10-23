@@ -227,8 +227,14 @@ return Debug.getNativeHeapAllocatedSize() >= LARGE_MODEL_NATIVE_HEAP_BYTES
 private fun getProjectPlateId(index:Int):Int {
 return if (index >= 0 && index < projectPlateIds.size) projectPlateIds.get(index) else 0
 }
+private val sliceExecution = ru.ytkab0bp.slicebeam.utils.SliceExecutionGate { completion ->
+    ViewUtils.postOnMainThread { completion() }
+}
+private var slicedConfigUid = -1
+private var slicedPrinter: String? = null
 fun hasSliceResult():Boolean {
-return gCodeResult != null
+return gCodeResult != null && ru.ytkab0bp.slicebeam.utils.SliceResultValidity.isCurrent(
+    slicedConfigUid, slicedPrinter, SliceBeam.CONFIG_UID, SliceBeam.CONFIG?.presets?.get("printer"))
 }
 private var preparedFilamentModel: Model? = null
 private var preparedFilamentObjectCount = -1
@@ -334,15 +340,23 @@ BeamAlertDialogBuilder(context).setTitle(R.string.MmuSyncFailed)
 private fun runSlice(model:Model, onSuccess:Runnable? = null) {
 val ctx = getContext()
 if (ctx == null || glView == null || model !== currentModel) return
+// Native slicing writes a shared config and output path; never allow two writers.
+try {
+sliceExecution.launch(onBusy = {
+    SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(R.string.SliceAlreadyRunning))
+}, prepare = { complete ->
+slicedConfigUid = -1
 tempExportingFile = null
 val cfg = SliceBeam.getCurrentConfigFile()
 val gcode = tempGCodePath
 val settingsRevision = TemporaryProjectSettings.sliceRevision
 if (!DEBUG_VIEWER) SliceProgressBottomSheet(ctx).show()
-Thread({ try
+val work: () -> Unit = { try
 {
 Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT)
 SliceBeam.ensureCompatibleSelection()
+val sliceConfigUid = SliceBeam.CONFIG_UID
+val slicePrinter = SliceBeam.CONFIG?.presets?.get("printer")
 val activeConfig = SliceBeam.CONFIG
 val activePrinter = if (activeConfig == null) null
 else activeConfig.findPrinter(activeConfig.presets?.get("printer"))
@@ -361,13 +375,17 @@ else
 {
 GCodeProcessorResult(gcode)
 }
-ViewUtils.postOnMainThread({
+complete {
 val viewport = glView
-if (destroyed || viewport == null || model !== currentModel || settingsRevision != TemporaryProjectSettings.sliceRevision) {
+if (destroyed || viewport == null || model !== currentModel || settingsRevision != TemporaryProjectSettings.sliceRevision ||
+    !ru.ytkab0bp.slicebeam.utils.SliceResultValidity.isCurrent(sliceConfigUid, slicePrinter,
+        SliceBeam.CONFIG_UID, SliceBeam.CONFIG?.presets?.get("printer"))) {
     produced.release()
     if (!destroyed && getContext() != null) SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(R.string.ProjectSettingsReslice))
-    return@postOnMainThread
+    return@complete
 }
+slicedConfigUid = sliceConfigUid
+slicedPrinter = slicePrinter
 gCodeResult = produced
 viewport.queueEvent({ viewport.renderer.setGCodeViewer(produced)
 viewport.requestRender() })
@@ -376,18 +394,27 @@ tempExportingFile = null
 val portrait = usesCompactPortraitLayout(ctx)
 (menuMap.get(MenuCategory.SLICE_AND_EXPORT.ordinal) as SliceMenu)
 .refreshItems(portrait)
-if (onSuccess != null) onSuccess.run() })
+if (onSuccess != null) onSuccess.run() }
 }
-catch (e:Exception) {
-Log.e("BedFragment", "Slice failed", e)
-ViewUtils.postOnMainThread({ SliceBeam.EVENT_BUS.fireEvent(SlicingProgressEvent(100, ""))
-BeamAlertDialogBuilder(ctx)
-.setTitle(R.string.SliceFailed)
-.setMessage(e.message)
-.setPositiveButton(android.R.string.ok, null)
-.show() })
+catch (failure: Throwable) {
+    complete { showSliceFailure(ctx, failure) }
 }
-}).start()
+}
+work
+})
+} catch (failure: Throwable) {
+    showSliceFailure(ctx, failure)
+}
+}
+private fun showSliceFailure(ctx: Context, failure: Throwable) {
+Log.e("BedFragment", "Slice failed", failure)
+    SliceBeam.EVENT_BUS.fireEvent(SlicingProgressEvent(100, ""))
+    if (destroyed || getContext() == null) return
+    BeamAlertDialogBuilder(ctx)
+        .setTitle(R.string.SliceFailed)
+        .setMessage(failure.message ?: ctx.getString(R.string.SliceFailed))
+        .setPositiveButton(android.R.string.ok, null)
+        .show()
 }
 fun simplifySelectedObject(keepRatio:Float) {
 val model = currentModel
@@ -721,6 +748,8 @@ embossModeView = null
 }
 }
 fun loadGCode(f:File) {
+slicedConfigUid = SliceBeam.CONFIG_UID
+slicedPrinter = SliceBeam.CONFIG?.presets?.get("printer")
 gCodeResult = GCodeProcessorResult(f)
 ViewUtils.postOnMainThread({ glView!!.queueEvent({ glView!!.renderer.setGCodeViewer(gCodeResult)
 glView!!.requestRender() })
