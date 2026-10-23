@@ -12,6 +12,17 @@ class LargeModelPickTest {
     private val min = Vec3d(-10.0, -10.0, 0.0)
     private val max = Vec3d(10.0, 10.0, 2.0)
 
+    @Test fun boundsPickingDoesNotInitializeNativeRaycasterOnTheJvm() {
+        // A JVM has no Android native slicer: any native initialization here fails the test.
+        val gl = GLModel(0L)
+        GLModel::class.java.getDeclaredField("approximatePickBounds").apply {
+            isAccessible = true
+            set(gl, min to max)
+        }
+        val raycaster = gl.raycaster
+        org.junit.Assert.assertSame(raycaster, gl.raycaster)
+    }
+
     @Test fun frontHitReturnsEntryFace() {
         val hit = requireNotNull(LargeModelPick.hit(Vec3d(0.0, 0.0, 20.0), Vec3d(0.0, 0.0, -1.0), min, max))
         assertEquals(2.5, hit.position.z, 1e-9)
@@ -36,6 +47,14 @@ class LargeModelPickTest {
             Vec3d(-1.0, -1.0, 0.0), Vec3d(1.0, 1.0, 0.0),
         )
         assertNotNull(hit)
+    }
+
+    @Test fun invalidAndBackwardRaysNeverSelectAModel() {
+        assertNull(LargeModelPick.hit(Vec3d(Double.NaN, 0.0, 20.0), Vec3d(0.0, 0.0, -1.0), min, max))
+        assertNull(LargeModelPick.hit(Vec3d(0.0, 0.0, 20.0), Vec3d(0.0, 0.0, 0.0), min, max))
+        assertNull(LargeModelPick.hit(Vec3d(0.0, 0.0, 20.0), Vec3d(0.0, 0.0, 1.0), min, max))
+        assertNull(LargeModelPick.hit(Vec3d(0.0, 0.0, 20.0), Vec3d(0.0, 0.0, -1.0),
+            Vec3d(Double.NEGATIVE_INFINITY, -1.0, 0.0), max))
     }
 
     @Test fun exactNativeHitsRemainMarkedPrecise() {
