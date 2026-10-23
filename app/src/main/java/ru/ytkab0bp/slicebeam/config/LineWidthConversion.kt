@@ -6,7 +6,10 @@ import java.util.Locale
 object LineWidthConversion {
     val keys = setOf("line_width", "initial_layer_line_width", "inner_wall_line_width",
         "outer_wall_line_width", "sparse_infill_line_width", "internal_solid_infill_line_width",
-        "top_surface_line_width", "support_line_width")
+        "top_surface_line_width", "support_line_width", "bridge_line_width")
+
+    /** Orca rejects bridge widths above the nozzle diameter even if other lines may be wider. */
+    fun maxPercent(key: String): Double = if (key == "bridge_line_width") 100.0 else 300.0
 
     fun nozzle(raw: String?): Double? = raw?.substringBefore(';')?.substringBefore(',')?.trim()
         ?.replace(',', '.')?.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 }

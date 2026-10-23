@@ -26,7 +26,8 @@ import java.util.function.Consumer
 /** Both editors write one Orca percentage, so changing the nozzle keeps the same ratio. */
 object ComposeLineWidthOption {
     @Composable
-    fun Content(title: String, initialValue: String, nozzleMm: Double, onChanged: Consumer<String>) {
+    fun Content(title: String, initialValue: String, nozzleMm: Double, maxPercent: Double, helpText: String?,
+                onChanged: Consumer<String>) {
         val initialPercent = LineWidthConversion.percent(initialValue, nozzleMm) ?: 100.0
         var percent by rememberSaveable(initialValue, nozzleMm) {
             mutableStateOf(LineWidthConversion.formatPercent(initialPercent))
@@ -70,11 +71,20 @@ object ComposeLineWidthOption {
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
                 }
                 val validPercent = percent.replace(',', '.').toDoubleOrNull()
-                    ?.takeIf { it.isFinite() && it in 20.0..300.0 }
-                TextButton(enabled = changed && validPercent != null, onClick = {
-                    onChanged.accept("${LineWidthConversion.formatPercent(validPercent!!)}%")
-                    changed = false
-                }) { Text(androidx.compose.ui.res.stringResource(R.string.LineWidthApply)) }
+                    ?.takeIf { it.isFinite() && it in 20.0..maxPercent }
+                if (!helpText.isNullOrBlank()) {
+                    Text(helpText,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    TextButton(onClick = { onChanged.accept("0") }) {
+                        Text(androidx.compose.ui.res.stringResource(R.string.LineWidthAutomatic))
+                    }
+                    TextButton(enabled = changed && validPercent != null, onClick = {
+                        onChanged.accept("${LineWidthConversion.formatPercent(validPercent!!)}%")
+                        changed = false
+                    }) { Text(androidx.compose.ui.res.stringResource(R.string.LineWidthApply)) }
+                }
             }
         }
     }
