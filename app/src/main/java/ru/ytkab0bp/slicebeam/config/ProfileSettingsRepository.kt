@@ -103,6 +103,11 @@ object ProfileSettingsRepository {
         }
         val draft = draftFor(profileType)
         if (baseValue == editedValue) draft.remove(key) else draft.put(key, editedValue)
+        if (profileType == ConfigObject.PROFILE_LIST_FILAMENT && key == "pressure_advance" &&
+            editedValue.toDoubleOrNull()?.let { it > 0.0 } == true) {
+            // A positive value in a disabled preset would otherwise be metadata only.
+            draft.put("enable_pressure_advance", "1")
+        }
         publishDraftChange()
     }
 

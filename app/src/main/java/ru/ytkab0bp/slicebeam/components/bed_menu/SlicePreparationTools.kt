@@ -9,6 +9,10 @@ import java.util.Locale
 
 /** File and printer checks used while preparing a sliced job for upload. */
 internal object SlicePreparationTools {
+    data class PressureAdvanceCommands(val filament: List<String>, val custom: List<String>)
+
+    private val klipperPa = Regex("^\\s*SET_PRESSURE_ADVANCE\\b.*?\\bADVANCE=([0-9]+(?:\\.[0-9]+)?)", RegexOption.IGNORE_CASE)
+    private val marlinPa = Regex("^\\s*M900\\s+K([0-9]+(?:\\.[0-9]+)?)", RegexOption.IGNORE_CASE)
     private val supportedSendTypes = setOf("octoprint", "moonraker", "klipper")
     private val autoLevelCommand = Regex("(?is).*\\bG29\\b.*")
 
@@ -89,5 +93,25 @@ internal object SlicePreparationTools {
                 .findAll(tail).lastOrNull() ?: return emptyList()
             return match.groupValues[1].split(';').map(String::trim)
         }
+    }
+
+    /** Executable commands only. Metadata comments do not prove that PA reaches firmware. */
+    @Throws(IOException::class)
+    fun readPressureAdvanceCommands(gcode: File?): PressureAdvanceCommands {
+        if (gcode == null || !gcode.isFile || gcode.length() == 0L) {
+            throw IOException("Sliced G-code is missing or empty")
+        }
+        val filament = linkedSetOf<String>()
+        val custom = linkedSetOf<String>()
+        FileReader(gcode).buffered().useLines { lines ->
+            lines.forEach { line ->
+                val value = klipperPa.find(line)?.groupValues?.get(1)
+                    ?: marlinPa.find(line)?.groupValues?.get(1)
+                    ?: return@forEach
+                val target = if (line.contains("Override pressure advance value", true)) filament else custom
+                if (target.size < 16) target.add(value)
+            }
+        }
+        return PressureAdvanceCommands(filament.toList(), custom.toList())
     }
 }

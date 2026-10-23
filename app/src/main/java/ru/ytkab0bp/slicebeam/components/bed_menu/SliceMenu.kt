@@ -112,6 +112,12 @@ class SliceMenu : ListBedMenu() {
                 SliceUploadController.showPreparationFailure(bed)
                 return@execute
             }
+            val pressureAdvance = try {
+                SlicePreparationTools.readPressureAdvanceCommands(gcode)
+            } catch (_: IOException) {
+                SliceUploadController.showPreparationFailure(bed)
+                return@execute
+            }
             val toolCount = maxOf(1, (activeTools.maxOrNull() ?: 0) + 1)
             ViewUtils.postOnMainThread {
                 if (bed.getContext() != null && bed.hasSliceResult()) {
@@ -122,6 +128,7 @@ class SliceMenu : ListBedMenu() {
                         toolCount,
                         activeTools,
                         sourceFilamentTypes,
+                        pressureAdvance,
                         this::activatePrinterProfile,
                         { updatedPrinter ->
                             refreshMmuAndPrepare(

@@ -5,6 +5,8 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 import ru.ytkab0bp.slicebeam.slic3r.ConfigOptionDef.ConfigOptionType.INTS
 import ru.ytkab0bp.slicebeam.slic3r.ConfigOptionDef.ConfigOptionType.STRINGS
+import ru.ytkab0bp.slicebeam.slic3r.ConfigOptionDef.ConfigOptionType.FLOATS
+import ru.ytkab0bp.slicebeam.slic3r.ConfigOptionDef.ConfigOptionType.BOOLS
 
 class OwnFilamentTemperatureProfilesTest {
     private fun profile(name: String, material: String, nozzle: String, bed: String) = ConfigObject(name).apply {
@@ -36,6 +38,27 @@ class OwnFilamentTemperatureProfilesTest {
             assertEquals("#FF0000", target["filament_colour"])
             assertEquals("PETG", target["filament_type"])
             assertEquals("240", TemporaryProjectSettings.valueFor(ConfigObject.PROFILE_LIST_FILAMENT, "nozzle_temperature", true))
+        } finally {
+            TemporaryProjectSettings.clear()
+        }
+    }
+
+    @Test fun ownFilamentPressureAdvanceOverridesDisabledImportedProjectValue() {
+        val own = profile("Own PETG", "PETG", "240", "75").apply {
+            put("pressure_advance", "0.051")
+            put("enable_pressure_advance", "1")
+        }
+        val imported = ThreeMfProjectSettings("part.3mf", emptyMap(), listOf(mapOf(
+            "filament_type" to "PETG", "pressure_advance" to "0.02",
+            "enable_pressure_advance" to "0",
+        )), mapOf("filament_type" to STRINGS, "pressure_advance" to FLOATS,
+            "enable_pressure_advance" to BOOLS))
+        try {
+            TemporaryProjectSettings.activate(imported, listOf(own))
+            val target = ConfigObject()
+            TemporaryProjectSettings.applyTo(target)
+            assertEquals("0.051", target["pressure_advance"])
+            assertEquals("1", target["enable_pressure_advance"])
         } finally {
             TemporaryProjectSettings.clear()
         }

@@ -54,7 +54,7 @@ object TemporaryProjectSettings {
             process = LinkedHashMap(source.process), filaments = source.filaments.mapIndexed { index, imported ->
                 LinkedHashMap(imported).apply {
                     ownTemperatureProfiles.getOrNull(index)?.values?.forEach { (key, raw) ->
-                        if (key in source.filamentTypes && OwnFilamentTemperatureProfiles.isTemperatureKey(key)) {
+                        if (key in source.filamentTypes && OwnFilamentTemperatureProfiles.isOwnFilamentOverrideKey(key)) {
                             val scalar = splitValue(raw, source.filamentTypes[key]).firstOrNull()
                             if (!scalar.isNullOrBlank()) put(key, scalar)
                         }
@@ -130,6 +130,9 @@ object TemporaryProjectSettings {
             while (filamentEdits.size <= index) filamentEdits.add(LinkedHashMap())
             val value = edited
             filamentEdits[index][key] = value
+            if (key == "pressure_advance" && value.toDoubleOrNull()?.let { it.isFinite() && it > 0.0 } == true) {
+                filamentEdits[index]["enable_pressure_advance"] = "1"
+            }
             if (key == "filament_colour" || key == "filament_type") {
                 val slots = slots() ?: mutableListOf(FilamentSlot(0x1AC5A2, "PLA"))
                 val slot = slots[index.coerceAtMost(slots.lastIndex)]

@@ -106,7 +106,26 @@ class ProfileSettingsRepositoryTest {
 
         ProfileSettingsRepository.bindActiveProfile(ConfigObject.PROFILE_LIST_FILAMENT, "PLA")
         assertEquals("PLA", ProfileSettingsRepository.uiState.value.activeProfileTitle)
-        assertEquals(1, ProfileSettingsRepository.uiState.value.pendingCount)
+        assertEquals(2, ProfileSettingsRepository.uiState.value.pendingCount)
+    }
+
+    @Test fun editingPositiveFilamentPressureAdvanceEnablesItsGcodeCommand() {
+        val profile = ConfigObject("PLA").apply {
+            put("pressure_advance", "0.02")
+            put("enable_pressure_advance", "0")
+        }
+        ProfileSettingsRepository.setPendingValue(ConfigObject.PROFILE_LIST_FILAMENT,
+            "pressure_advance", "0.02", "0.051")
+        val slice = ConfigObject(profile)
+        ProfileSettingsRepository.applyPendingTo(slice)
+        assertEquals("0.051", slice["pressure_advance"])
+        assertEquals("1", slice["enable_pressure_advance"])
+
+        ProfileSettingsRepository.setPendingValue(ConfigObject.PROFILE_LIST_FILAMENT,
+            "enable_pressure_advance", "0", "0")
+        val disabled = ConfigObject(profile)
+        ProfileSettingsRepository.applyPendingTo(disabled)
+        assertEquals("0", disabled["enable_pressure_advance"])
     }
 
     @Test

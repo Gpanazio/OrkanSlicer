@@ -1132,4 +1132,8 @@
     <string name="LargeModelSurfaceTitle">Simplify for surface tools?</string>
     <string name="LargeModelSurfaceMessage">This model has %1$d triangles. Painting and embossing need at most %2$d. Simplifying changes the model on the build plate and may remove detail; the source file stays unchanged. Open the tool again after simplification.</string>
     <string name="LargeModelSurfaceStillDense">The model is still too detailed for precise surface tools. Try a stronger simplification.</string>
+    <string name="PrintPreparePressureAdvanceFilament">Filament pressure advance in G-code: %1$s</string>
+    <string name="PrintPreparePressureAdvanceCustomOnly">PA only from start/custom G-code: %1$s. No slicer-generated filament PA command.</string>
+    <string name="PrintPreparePressureAdvanceNone">No pressure-advance command found in the G-code.</string>
+    <string name="PrintPreparePressureAdvanceAlsoCustom">Additional PA command in start/custom G-code: %1$s. Check the values before printing.</string>
 </resources>

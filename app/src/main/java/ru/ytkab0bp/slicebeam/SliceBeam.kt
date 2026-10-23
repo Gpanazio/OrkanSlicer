@@ -448,7 +448,7 @@ open class SliceBeam : Application() {
             }
             TemporaryProjectSettings.applyTo(singleObject, activeFilamentCount)
             if (TemporaryProjectSettings.active) {
-                ru.ytkab0bp.slicebeam.config.SlotFilamentProfiles.applyOwnTemperaturesTo(
+                ru.ytkab0bp.slicebeam.config.SlotFilamentProfiles.applyOwnFilamentSettingsTo(
                     singleObject, current,
                     if (activeFilamentCount > 0) activeFilamentCount else Prefs.getFilamentSlots().size,
                 )
