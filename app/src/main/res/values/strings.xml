@@ -1128,4 +1128,8 @@
     <string name="GCodePreviewBadge">Preview: layers %1$d–%2$d of %3$d</string>
     <string name="GCodePerformanceShort">Fast mode</string>
     <string name="GCodeExportShort">G-code</string>
+    <string name="LargeModelPreciseSurfaceUnavailable">This tool needs an exact surface point. Simplify the model first; selecting it still works.</string>
+    <string name="LargeModelSurfaceTitle">Simplify for surface tools?</string>
+    <string name="LargeModelSurfaceMessage">This model has %1$d triangles. Painting and embossing need at most %2$d. Simplifying changes the model on the build plate and may remove detail; the source file stays unchanged. Open the tool again after simplification.</string>
+    <string name="LargeModelSurfaceStillDense">The model is still too detailed for precise surface tools. Try a stronger simplification.</string>
 </resources>

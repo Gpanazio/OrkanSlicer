@@ -1,12 +1,15 @@
 package ru.ytkab0bp.slicebeam.utils
 
 import android.app.Application
+import android.app.ActivityManager
+import android.content.Context
 import android.content.SharedPreferences
 import android.preference.PreferenceManager
 import ru.ytkab0bp.slicebeam.BuildConfig
 import ru.ytkab0bp.slicebeam.R
 import ru.ytkab0bp.slicebeam.SetupActivity
 import ru.ytkab0bp.slicebeam.config.TemporaryProjectSettings
+import ru.ytkab0bp.slicebeam.render.DevicePerformancePolicy
 
 /** Shared preference access for the Android app and its Java-based host integrations. */
 open class Prefs {
@@ -24,13 +27,18 @@ open class Prefs {
         val MAX_FILAMENT_COLORS = 16
 
         private var mPrefs: SharedPreferences? = null
+        private var lowRamDevice = false
 
         private fun requirePrefs(): SharedPreferences = mPrefs!!
 
         @JvmStatic
         fun init(ctx: Application) {
             mPrefs = PreferenceManager.getDefaultSharedPreferences(ctx)
+            lowRamDevice = (ctx.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager)?.isLowRamDevice == true
         }
+
+        @JvmStatic
+        fun isLowRamDevice(): Boolean = lowRamDevice
 
         /** May be null before application bootstrap has initialized preferences. */
         @JvmStatic
@@ -171,7 +179,9 @@ open class Prefs {
         fun isVibrationEnabled(): Boolean = requirePrefs().getBoolean("vibration", true)
 
         @JvmStatic
-        fun getRenderScale(): Float = requirePrefs().getFloat("render_scale", 1f)
+        fun getRenderScale(): Float = requirePrefs().getFloat(
+            "render_scale", DevicePerformancePolicy.defaultRenderScale(lowRamDevice)
+        ).coerceIn(0.5f, 1f)
 
         @JvmStatic
         fun setRenderScale(s: Float) {
