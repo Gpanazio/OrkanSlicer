@@ -25,7 +25,8 @@ class PrintConfigDef @Keep constructor() {
             "tower_speed",
             // If absent, the native bridge selects Orkan's established PEI/high-temp default.
             "curr_bed_type",
-        )
+        ) + listOf("cool_plate", "eng_plate", "textured_plate", "textured_cool_plate", "supertack_plate")
+            .flatMap { listOf("${it}_temp", "${it}_temp_initial_layer") }
 
         private var instance: PrintConfigDef? = null
         private val clzMap = HashMap<String, Class<*>>()

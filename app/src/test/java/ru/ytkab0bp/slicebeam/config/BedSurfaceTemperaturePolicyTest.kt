@@ -44,4 +44,11 @@ class BedSurfaceTemperaturePolicyTest {
         assertEquals("Supertack Plate", BedSurfaceTemperaturePolicy.printerDefaultValue("6"))
         assertEquals(null, BedSurfaceTemperaturePolicy.printerDefaultValue("unknown"))
     }
+    @Test fun missingSurfaceDefaultsAreNotInjectedBeforeLegacyBackfill() {
+        val skipped = ru.ytkab0bp.slicebeam.slic3r.PrintConfigDef.SKIP_DEFAULT_OPTIONS
+        for (surface in listOf("cool_plate", "eng_plate", "textured_plate", "textured_cool_plate", "supertack_plate")) {
+            org.junit.Assert.assertTrue("$surface defaults would mask a missing legacy temperature", "${surface}_temp" in skipped)
+            org.junit.Assert.assertTrue("${surface}_temp_initial_layer" in skipped)
+        }
+    }
 }
