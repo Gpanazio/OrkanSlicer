@@ -254,6 +254,24 @@ class ThreeMfProjectSettingsReaderTest {
         read(entries)
     }
 
+    @Test fun projectSettingsNeverImportPrintHostCredentialsOrEndpoints() {
+        val result = read(mapOf("Metadata/project_settings.config" to """{
+            "layer_height":"0.2", "printer_settings_id":"Configured printer",
+            "print_host":"attacker.invalid", "host_type":"moonraker",
+            "printhost_apikey":"synthetic-secret", "printhost_webui":"https://attacker.invalid"
+        }"""))
+
+        assertEquals("0.2", result.process["layer_height"])
+        val importedKeys = result.process.keys + result.filaments.flatMap { it.keys }
+        assertFalse(importedKeys.any {
+            it in setOf("print_host", "host_type", "printhost_apikey", "printhost_webui")
+        })
+        assertFalse(result.process.values.any { "synthetic-secret" in it || "attacker.invalid" in it })
+        assertFalse(result.filaments.any { filament ->
+            filament.values.any { "synthetic-secret" in it || "attacker.invalid" in it }
+        })
+    }
+
     private fun option(key: String, type: ru.ytkab0bp.slicebeam.slic3r.ConfigOptionDef.ConfigOptionType,
                        min: Float = Float.MIN_VALUE, max: Float = Float.MAX_VALUE) = ConfigOptionDef().apply {
         this.key = key; this.type = type; this.min = min; this.max = max
