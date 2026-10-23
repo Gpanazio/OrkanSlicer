@@ -5,8 +5,6 @@ import android.widget.Toast
 import ru.ytkab0bp.slicebeam.R
 import ru.ytkab0bp.slicebeam.SliceBeam
 import ru.ytkab0bp.slicebeam.config.ConfigObject
-import ru.ytkab0bp.slicebeam.slic3r.ConfigOptionDef
-import ru.ytkab0bp.slicebeam.slic3r.PrintConfigDef
 import ru.ytkab0bp.slicebeam.slic3r.Slic3rUtils
 import ru.ytkab0bp.slicebeam.config.SlotFilamentProfiles
 import ru.ytkab0bp.slicebeam.config.TemporaryProjectSettings
@@ -50,20 +48,6 @@ class FilamentConfigFragment : ProfileListFragment() {
     override fun useTabs(): Boolean = true
 
     override fun useAccordionCategories(): Boolean = true
-
-    override fun updateConfigField(def: ConfigOptionDef?, index: Int, value: String) {
-        super.updateConfigField(def, index, value)
-        if (def == null || (def.key != "hot_plate_temp" && def.key != "hot_plate_temp_initial_layer")) return
-
-        // Keep one general bed temperature in the UI and synchronize Orca's surface fields.
-        val stage = if (def.key.endsWith("_initial_layer")) "_initial_layer" else ""
-        val options = PrintConfigDef.getInstance().options
-        for (surface in arrayOf("cool_plate_temp", "eng_plate_temp", "textured_plate_temp",
-            "textured_cool_plate_temp", "supertack_plate_temp")) {
-            val surfaceOption = options["$surface$stage"]
-            if (surfaceOption != null) super.updateConfigField(surfaceOption, index, value)
-        }
-    }
 
     override fun onCreate() {
         super.onCreate()

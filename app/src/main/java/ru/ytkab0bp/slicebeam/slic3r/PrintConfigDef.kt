@@ -23,6 +23,8 @@ class PrintConfigDef @Keep constructor() {
             "tilt_down_initial_speed",
             "tilt_down_finish_speed",
             "tower_speed",
+            // If absent, the native bridge selects Orkan's established PEI/high-temp default.
+            "curr_bed_type",
         )
 
         private var instance: PrintConfigDef? = null

@@ -130,15 +130,15 @@ class TemporaryProjectSettingsTest {
         assertEquals("TPU", TemporaryProjectSettings.slots()!!.single().type)
     }
 
-    @Test fun generalBedEditorUpdatesOnlyTheSelectedFilamentsSurfaceTemperatures() {
+    @Test fun bedEditorPreservesOtherSurfaceTemperatures() {
         TemporaryProjectSettings.activate(project())
         TemporaryProjectSettings.selectFilament(1)
         TemporaryProjectSettings.setValue(filament, "hot_plate_temp", "70")
         val target = ConfigObject().apply { put("hot_plate_temp", "60"); put("cool_plate_temp", "35"); put("textured_plate_temp", "55") }
         TemporaryProjectSettings.applyTo(target)
         assertEquals("60,70", target["hot_plate_temp"])
-        assertEquals("35,70", target["cool_plate_temp"])
-        assertEquals("55,70", target["textured_plate_temp"])
+        assertEquals("35", target["cool_plate_temp"])
+        assertEquals("55", target["textured_plate_temp"])
     }
 
     @Test fun clearingDropsProjectSlotsAndMappingsAndChangingSelectionDoesNotInvalidateSlices() {

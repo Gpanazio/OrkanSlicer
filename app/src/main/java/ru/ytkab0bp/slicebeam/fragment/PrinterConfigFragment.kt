@@ -170,6 +170,10 @@ class PrinterConfigFragment : ProfileListFragment() {
             ?: SliceBeam.requireConfig().printerConfigs.firstOrNull()
             ?: ConfigObject.createCustomPrinterProfile()
         currentConfig = ConfigObject(printer)
+        if (currentConfig?.get("curr_bed_type").isNullOrBlank()) {
+            currentConfig?.put("curr_bed_type", ru.ytkab0bp.slicebeam.config.BedSurfaceTemperaturePolicy
+                .printerDefaultValue(printer["default_bed_type"]) ?: "High Temp Plate")
+        }
     }
 
     override fun getCurrentConfig(): ConfigObject? = currentConfig

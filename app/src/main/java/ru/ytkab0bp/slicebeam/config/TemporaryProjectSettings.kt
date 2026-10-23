@@ -130,13 +130,6 @@ object TemporaryProjectSettings {
             while (filamentEdits.size <= index) filamentEdits.add(LinkedHashMap())
             val value = edited
             filamentEdits[index][key] = value
-            if (key == "hot_plate_temp" || key == "hot_plate_temp_initial_layer") {
-                val suffix = if (key.endsWith("_initial_layer")) "_initial_layer" else ""
-                for (surface in listOf("cool_plate", "eng_plate", "textured_plate", "textured_cool_plate", "supertack_plate")) {
-                    val surfaceKey = "${surface}_temp$suffix"
-                    if (surfaceKey in project.filamentTypes) filamentEdits[index][surfaceKey] = value
-                }
-            }
             if (key == "filament_colour" || key == "filament_type") {
                 val slots = slots() ?: mutableListOf(FilamentSlot(0x1AC5A2, "PLA"))
                 val slot = slots[index.coerceAtMost(slots.lastIndex)]

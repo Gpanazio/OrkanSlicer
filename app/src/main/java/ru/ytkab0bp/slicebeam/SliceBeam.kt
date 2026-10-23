@@ -453,7 +453,11 @@ open class SliceBeam : Application() {
                     if (activeFilamentCount > 0) activeFilamentCount else Prefs.getFilamentSlots().size,
                 )
             }
-            ru.ytkab0bp.slicebeam.config.SliceTemperatureNormalizer.applyGeneralBedTemperature(singleObject)
+            ru.ytkab0bp.slicebeam.config.SliceTemperatureNormalizer.fillMissingBedSurfaceTemperatures(singleObject)
+            if (singleObject["curr_bed_type"].isNullOrBlank()) {
+                singleObject.put("curr_bed_type", ru.ytkab0bp.slicebeam.config.BedSurfaceTemperaturePolicy
+                    .printerDefaultValue(singleObject["default_bed_type"]) ?: "High Temp Plate")
+            }
             return singleObject
         }
 
