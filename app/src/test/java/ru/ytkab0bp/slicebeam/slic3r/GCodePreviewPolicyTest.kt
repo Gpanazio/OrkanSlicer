@@ -9,6 +9,12 @@ class GCodePreviewPolicyTest {
         assertEquals(GCodePreviewSelection(1, 1533), GCodePreviewPolicy.initial(1533, false, null))
         assertEquals(GCodePreviewSelection(1, 23), GCodePreviewPolicy.initial(23, true, null))
     }
+    @Test fun weakDevicePreviewStartsWithTwentyFiveLayersWithoutTruncatingThePrint() {
+        assertEquals(GCodePreviewSelection(1, 25, 25), GCodePreviewPolicy.initial(104, true, null, 25))
+        assertEquals(GCodePreviewSelection(1, 104, 25), GCodePreviewPolicy.initial(104, false, null, 25))
+        assertEquals(GCodePreviewSelection(1, 25, 25), GCodePreviewPolicy.blockRange(1, 104, 25))
+        assertEquals(GCodePreviewSelection(101, 104, 25), GCodePreviewPolicy.blockRange(5, 104, 25))
+    }
     @Test fun consecutivePartsIncludeEachLayerExactlyOnceAndIncludeTheFinalLayer() {
         val ranges = (1..GCodePreviewPolicy.blockCount(1533, 50)).map { GCodePreviewPolicy.blockRange(it, 1533, 50) }
         assertEquals(31, ranges.size)

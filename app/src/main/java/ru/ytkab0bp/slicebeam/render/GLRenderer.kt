@@ -76,6 +76,7 @@ private val primeTowerBedHits = ArrayList<GLModel.HitResult>()
  private val inactivePlateModels = ArrayList<Model>()
 private val inactivePlateGlModels = ArrayList<MutableList<GLModel>>()
 private val inactivePlateOffsets = ArrayList<DoubleArray>()
+private var inactivePlateSimplePreview: Boolean? = null
 private val plateViewMatrix = DoubleArray(16)
 var gcodeResult: GCodeProcessorResult? = null
 var viewer: GCodeViewer? = null
@@ -363,10 +364,11 @@ viewer = GCodeViewer()
 viewer!!.initGL()
 viewer!!.setThemeColors()
 val performance = Prefs.isPerformanceModeEnabled()
-viewer!!.applyPerformanceMode(performance)
+viewer!!.applyPerformanceMode(performance || Prefs.isLowRamDevice())
 viewer!!.load(gcodeResult!!)
 val preview = ru.ytkab0bp.slicebeam.slic3r.GCodePreviewPolicy.initial(
-    viewer!!.getLayersCount(), performance, gcodeResult!!.previewSelection,
+    viewer!!.getLayersCount(), performance || Prefs.isLowRamDevice(), gcodeResult!!.previewSelection,
+    DevicePerformancePolicy.initialLayerBlockSize(Prefs.isLowRamDevice()),
 )
 gcodeResult!!.previewSelection = preview
 gcodeResult!!.previewLayerCount = viewer!!.getLayersCount().coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
@@ -557,6 +559,7 @@ selectionModel!!.reset()
 fun resetGlModels() {
 if (this.model == null) return
 clearAllCommittedOverlays()
+while (glModels.size > this.model!!.objectsCount) glModels.removeAt(glModels.lastIndex).release()
 for (i in 0 until this.model!!.objectsCount)
 {
 if (i >= glModels.size) continue
@@ -572,10 +575,10 @@ glModels.clear()
 for (plateModels in inactivePlateGlModels)
 {
 for (glModel in plateModels) glModel.release()
+plateModels.clear()
 }
-inactivePlateGlModels.clear()
-inactivePlateModels.clear()
-inactivePlateOffsets.clear()
+// Keep plate references and offsets: returning from a picker must rebuild the
+// cheap GPU meshes without losing the other plates from the viewport.
 }
 /**
  * Replace the set of inactive plates shown around the active one. Must be called on the
@@ -589,6 +592,7 @@ for (gm in list) gm.release()
 inactivePlateGlModels.clear()
 inactivePlateModels.clear()
 inactivePlateOffsets.clear()
+inactivePlateSimplePreview = null
 if (models == null || offsets == null) return
 var p = 0
 while (p < models.size && p < offsets.size)
@@ -688,6 +692,16 @@ viewer!!.render(viewMatrix, projectionMatrix)
 // Models on inactive plates: plain dimmed render, no selection/paint/gizmo handling.
  if (viewer == null && !isViewerEnabled && !inactivePlateModels.isEmpty())
 {
+val simplePreview = DevicePerformancePolicy.useSimpleInactivePlatePreview(
+    Prefs.isPerformanceModeEnabled(), Prefs.isLowRamDevice()
+)
+if (inactivePlateSimplePreview != simplePreview) {
+    for (models in inactivePlateGlModels) {
+        for (mesh in models) mesh.release()
+        models.clear()
+    }
+    inactivePlateSimplePreview = simplePreview
+}
 shader = shadersManager!!.get(GLShadersManager.SHADER_GOURAUD_LIGHT)
 shader.startUsing()
 shader.setUniform("emission_factor", 0.05f)
@@ -713,7 +727,7 @@ shader.setUniform("volume_mirrored", left)
 while (list.size <= i)
 {
 val gm = GLModel()
-gm.initFrom(m, list.size)
+if (simplePreview) gm.initBoundingBox(m, list.size) else gm.initFrom(m, list.size)
 list.add(gm)
 }
 val gm = list.get(i)

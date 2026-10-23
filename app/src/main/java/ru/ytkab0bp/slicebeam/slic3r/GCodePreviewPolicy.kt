@@ -8,13 +8,13 @@ object GCodePreviewPolicy {
 
     fun maximum(layerCount: Long): Int = layerCount.coerceIn(1, Int.MAX_VALUE.toLong()).toInt()
 
-    fun initial(layerCount: Long, performance: Boolean, saved: GCodePreviewSelection?): GCodePreviewSelection {
+    fun initial(layerCount: Long, performance: Boolean, saved: GCodePreviewSelection?, blockSize: Int = DEFAULT_BLOCK_SIZE): GCodePreviewSelection {
         val max = maximum(layerCount)
         if (saved != null) {
             val from = saved.from.coerceIn(1, max)
             return saved.copy(from = from, to = saved.to.coerceIn(from, max), blockSize = saved.blockSize.coerceAtLeast(1))
         }
-        return GCodePreviewSelection(1, if (performance) minOf(max, DEFAULT_BLOCK_SIZE) else max)
+        return GCodePreviewSelection(1, if (performance) minOf(max, blockSize.coerceAtLeast(1)) else max, blockSize.coerceAtLeast(1))
     }
 
     fun blockCount(maximum: Int, size: Int): Int =
