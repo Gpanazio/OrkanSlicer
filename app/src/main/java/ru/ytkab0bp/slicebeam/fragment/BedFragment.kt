@@ -74,6 +74,7 @@ import ru.ytkab0bp.slicebeam.navigation.Fragment
 import ru.ytkab0bp.slicebeam.slic3r.Bed3D
 import ru.ytkab0bp.slicebeam.slic3r.GCodeProcessorResult
 import ru.ytkab0bp.slicebeam.slic3r.Model
+import ru.ytkab0bp.slicebeam.slic3r.LargeModelPick
 import ru.ytkab0bp.slicebeam.slic3r.ImportProgressCallback
 import ru.ytkab0bp.slicebeam.slic3r.Slic3rRuntimeError
 import ru.ytkab0bp.slicebeam.theme.ThemesRepo
@@ -416,24 +417,42 @@ Log.e("BedFragment", "Slice failed", failure)
         .setPositiveButton(android.R.string.ok, null)
         .show()
 }
-fun simplifySelectedObject(keepRatio:Float) {
+fun simplifySelectedObject(keepRatio:Float, maxTriangles:Int? = null) {
 val model = currentModel
 val selected = if (glView != null) glView!!.renderer.selectedObject else -1
 if (model == null || selected < 0) return
+val view = glView ?: return
 val tag = "model-simplify"
 SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(
 SnackbarsLayout.Type.LOADING, R.string.ModelSimplifyRunning).tag(tag))
-glView!!.queueEvent({ try
+view.queueEvent({ try
 {
+if (destroyed || view.renderer.model !== model || view.renderer.selectedObject != selected ||
+    selected >= model.objectsCount) {
+    ViewUtils.postOnMainThread { SliceBeam.EVENT_BUS.fireEvent(NeedDismissSnackbarEvent(tag)) }
+    return@queueEvent
+}
 val before = model.getTriangleCount(selected)
-val after = model.simplify(selected, keepRatio)
-glView!!.renderer.invalidateGlModel(selected)
-glView!!.requestRender()
+var after = model.simplify(selected, keepRatio)
+if (maxTriangles != null) {
+    repeat(2) {
+        if (after > maxTriangles) {
+            after = model.simplify(selected, LargeModelPick.suggestedKeepRatio(after))
+        }
+    }
+}
+view.renderer.invalidateGlModel(selected)
+view.requestRender()
 ViewUtils.postOnMainThread({ updateModel()
 SliceBeam.EVENT_BUS.fireEvent(NeedDismissSnackbarEvent(tag))
-SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(
-SliceBeam.INSTANCE!!.getResources().getQuantityString(
-R.plurals.ModelSimplifyDone, after, before, after))) })
+if (maxTriangles != null && after > maxTriangles) {
+    SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(
+        SnackbarsLayout.Type.ERROR, R.string.LargeModelSurfaceStillDense))
+} else {
+    SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(
+        SliceBeam.INSTANCE!!.getResources().getQuantityString(
+            R.plurals.ModelSimplifyDone, after, before, after)))
+} })
 }
 catch (e:Exception) {
 Log.e("BedFragment", "Could not simplify model", e)
@@ -675,6 +694,7 @@ fun showSelectedModelContextMenu() {
 @JvmOverloads fun enterPaintMode(objectIndex:Int, mode:Int = ru.ytkab0bp.slicebeam.render.GLRenderer.PAINT_MODE_COLOR) {
 val ctx = getContext()
 if (ctx == null || glView == null || objectIndex == -1 || paintModeView != null) return
+if (!requirePreciseSurfaceModel(objectIndex)) return
 glView!!.queueEvent({ glView!!.renderer.beginPaint(objectIndex, mode)
 glView!!.requestRender() })
 paintModeView = ru.ytkab0bp.slicebeam.view.PaintModeView(ctx, glView!!, Runnable { exitPaintMode() }, mode)
@@ -733,10 +753,32 @@ variableLayerHeightModeView = null
 fun enterEmbossMode() {
 val ctx = getContext()
 if (ctx == null || glView == null || embossModeView != null) return
+val selected = glView!!.renderer.selectedObject
+if (selected >= 0 && !requirePreciseSurfaceModel(selected)) return
 glView!!.queueEvent({ glView!!.renderer.isInEmbossMode = true
 glView!!.requestRender() })
 embossModeView = ru.ytkab0bp.slicebeam.view.EmbossModeView(ctx, glView!!, Runnable { exitEmbossMode() })
 overlayLayout!!.addView(embossModeView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+}
+private fun requirePreciseSurfaceModel(objectIndex:Int):Boolean {
+val ctx = getContext() ?: return false
+val model = currentModel ?: return false
+if (objectIndex < 0 || objectIndex >= model.objectsCount) return false
+val triangles = model.getTriangleCount(objectIndex)
+if (!LargeModelPick.needsPreciseSurfaceSimplification(triangles)) return true
+BeamAlertDialogBuilder(ctx)
+    .setTitle(R.string.LargeModelSurfaceTitle)
+    .setMessage(ctx.getString(R.string.LargeModelSurfaceMessage,
+        triangles, LargeModelPick.TRIANGLE_LIMIT))
+    .setPositiveButton(R.string.ModelSimplifyStart) { _, _ ->
+        if (currentModel === model && glView?.renderer?.selectedObject == objectIndex) {
+            simplifySelectedObject(LargeModelPick.suggestedKeepRatio(triangles),
+                LargeModelPick.TRIANGLE_LIMIT)
+        }
+    }
+    .setNegativeButton(android.R.string.cancel, null)
+    .show()
+return false
 }
 private fun exitEmbossMode() {
 if (embossModeView != null)
@@ -1800,7 +1842,7 @@ if (e is ImportCancelledException) {
 Log.e("BedFragment", "Could not load model", e)
 if (plateCount > 1) resetFailedMultiPlateImport(importGeneration)
 ViewUtils.postOnMainThread({ if (destroyed || importGeneration != modelImportGeneration) return@postOnMainThread
-SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(R.string.MenuFileOpenFileFailed))
+if (callback == null) SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(R.string.MenuFileOpenFileFailed))
 if (callback != null) callback?.onFailed(e) })
 }
 finally
