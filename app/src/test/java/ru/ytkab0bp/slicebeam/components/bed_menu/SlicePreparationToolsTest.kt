@@ -122,6 +122,7 @@ class SlicePreparationToolsTest {
             file.writeText("""
                 ; pressure_advance = 0.09,0.10
                 ; SET_PRESSURE_ADVANCE ADVANCE=0.11
+                SET_PRESSURE_ADVANCE ; ADVANCE=0.99
                 M900 K0.051
                 SET_PRESSURE_ADVANCE ADVANCE=0.04; Override pressure advance value
                 G1 X10 Y10

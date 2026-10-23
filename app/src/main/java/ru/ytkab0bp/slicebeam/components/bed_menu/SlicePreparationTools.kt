@@ -105,8 +105,9 @@ internal object SlicePreparationTools {
         val custom = linkedSetOf<String>()
         FileReader(gcode).buffered().useLines { lines ->
             lines.forEach { line ->
-                val value = klipperPa.find(line)?.groupValues?.get(1)
-                    ?: marlinPa.find(line)?.groupValues?.get(1)
+                val command = line.substringBefore(';')
+                val value = klipperPa.find(command)?.groupValues?.get(1)
+                    ?: marlinPa.find(command)?.groupValues?.get(1)
                     ?: return@forEach
                 val target = if (line.contains("Override pressure advance value", true)) filament else custom
                 if (target.size < 16) target.add(value)
