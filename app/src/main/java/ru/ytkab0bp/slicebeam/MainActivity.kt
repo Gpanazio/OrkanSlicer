@@ -1385,6 +1385,13 @@ override fun onCancelled() {
 override fun onFailed(error: Exception) {
     SliceBeam.EVENT_BUS.fireEvent(NeedDismissSnackbarEvent(tag))
     f.delete()
+    if (!isFinishing() && !isDestroyed()) {
+        BeamAlertDialogBuilder(this@MainActivity)
+            .setTitle(R.string.MenuFileOpenFileFailed)
+            .setMessage(error.message ?: getString(R.string.MenuFileOpenFileFailed))
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+    }
 }
 })
 }

@@ -24,7 +24,7 @@ object OrcaModelBridge {
         return try {
             val pointer = Native.model_read_from_file(path, baseName(source.name), plateId, progress)
             if (pointer == 0L) {
-                val error = Slic3rRuntimeError("Der Orca-Kern hat kein Modell zurückgegeben.")
+                val error = Slic3rRuntimeError("The Orca core returned no model.")
                 failed(error, errorMessage(error))
             } else {
                 OrcaModelLoadResult(pointer, null, null)
@@ -33,6 +33,8 @@ object OrcaModelBridge {
             failed(error, errorMessage(error))
         } catch (error: LinkageError) {
             failed(error, errorMessage(error))
+        } catch (cancelled: java.util.concurrent.CancellationException) {
+            throw cancelled
         } catch (error: RuntimeException) {
             failed(error, errorMessage(error))
         }
@@ -40,10 +42,10 @@ object OrcaModelBridge {
 
     @JvmStatic
     fun validateRequest(path: String?, plateId: Int, isFile: Boolean, canRead: Boolean): String? {
-        if (path.isNullOrBlank()) return "Es wurde kein Dateipfad zum Modell angegeben."
-        if (plateId < 0) return "Die ausgewählte Druckplatte ist ungültig."
-        if (!isFile) return "Die Modelldatei wurde nicht gefunden oder ist kein lesbares Dateiformat."
-        if (!canRead) return "Die Modelldatei kann nicht gelesen werden. Prüfe den Speicherzugriff."
+        if (path.isNullOrBlank()) return "No model file path was provided."
+        if (plateId < 0) return "The selected build plate is invalid."
+        if (!isFile) return "The model file was not found or is not a regular file."
+        if (!canRead) return "The model file cannot be read. Check storage access."
         return null
     }
 
@@ -57,9 +59,13 @@ object OrcaModelBridge {
 
     @JvmStatic
     fun errorMessage(error: Throwable): String = when (error) {
-        is LinkageError -> "Der native Orca-Kern konnte das Modell nicht laden. Prüfe die Gerätearchitektur und die mitgelieferten Bibliotheken."
+        is LinkageError -> "The native Orca core could not load the model. Check the device architecture and bundled libraries."
+        is Slic3rRuntimeError -> if (error.message == "STL_NO_CONNECTED_FACETS")
+            "The STL has no connected, printable facets after repair. Repair it in a desktop slicer and export it again as STL or 3MF."
+        else error.message?.takeIf { it.isNotBlank() }
+            ?: "The model could not be loaded. Check whether the file is corrupt or incomplete."
         else -> error.message?.takeIf { it.isNotBlank() }
-            ?: "Das Modell konnte nicht geladen werden. Prüfe, ob die Datei beschädigt oder unvollständig ist."
+            ?: "The model could not be loaded. Check whether the file is corrupt or incomplete."
     }
 
     private fun failed(error: Throwable, message: String) = OrcaModelLoadResult(0L, message, error)
