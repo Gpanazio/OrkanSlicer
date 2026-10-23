@@ -469,10 +469,10 @@ val dispatchTap = tapGestureGate.finish(
 )
 if (dispatchTap)
 {
-if (renderer.onClick(e.getX() * Prefs.getRenderScale(), e.getY() * Prefs.getRenderScale()))
-{
-requestRender()
-}
+ru.ytkab0bp.slicebeam.render.GlEditDispatch.click(
+    { action -> queueEvent { action() } }, e.getX(), e.getY(), Prefs.getRenderScale(),
+    renderer::onClick, ::requestRender,
+)
 }
 lastX = e.getX(0)
 lastY = e.getY(0)

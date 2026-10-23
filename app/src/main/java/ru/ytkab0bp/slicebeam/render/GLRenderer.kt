@@ -176,6 +176,22 @@ activeExtruders.addAll(this.model!!.getUsedFilaments(i).toList())
 }
 return hasPaint || activeExtruders.size > 1
 }
+/** Called only on the GL queue, before handing a dialog immutable values. */
+internal fun captureSelectionSnapshot(allowEmptySelection: Boolean = false): ModelSelectionSnapshot? {
+    val active = model ?: return null
+    val count = active.objectsCount
+    val indices = selectedObjects.sorted().toIntArray()
+    if (indices.any { it !in 0 until count } ||
+        (!allowEmptySelection && selectedObject !in indices)) return null
+    return ModelEditBinding(active, active.geometryRevision, count, selectedObject, indices)
+}
+internal fun isSelectionSnapshotCurrent(snapshot: ModelSelectionSnapshot): Boolean {
+    val active = model ?: return false
+    if (active !== snapshot.model) return false
+    return snapshot.matches(active, active.geometryRevision, active.objectsCount,
+        selectedObject, selectedObjects.sorted().toIntArray())
+}
+
 val selectedObjectsCount:Int
 get() {
 return selectedObjects.size
