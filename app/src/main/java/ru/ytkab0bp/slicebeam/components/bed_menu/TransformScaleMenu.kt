@@ -68,6 +68,9 @@ import ru.ytkab0bp.slicebeam.R
 import ru.ytkab0bp.slicebeam.SliceBeam
 import ru.ytkab0bp.slicebeam.components.UnfoldMenu
 import ru.ytkab0bp.slicebeam.events.SelectedObjectChangedEvent
+import ru.ytkab0bp.slicebeam.events.ObjectsListChangedEvent
+import ru.ytkab0bp.slicebeam.render.ModelSelectionSnapshot
+import ru.ytkab0bp.slicebeam.utils.ViewUtils
 import ru.ytkab0bp.slicebeam.fragment.BedFragment
 import ru.ytkab0bp.slicebeam.theme.ThemesRepo
 import ru.ytkab0bp.slicebeam.ui.BeamComposeTheme
@@ -75,7 +78,6 @@ import ru.ytkab0bp.slicebeam.ui.ThemeAwareComposeView
 import ru.ytkab0bp.slicebeam.utils.DoubleMatrix
 import ru.ytkab0bp.slicebeam.utils.Prefs
 import ru.ytkab0bp.slicebeam.utils.Vec3d
-import ru.ytkab0bp.slicebeam.utils.ViewUtils
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -120,6 +122,8 @@ class TransformScaleMenu(private val bed: BedFragment) : UnfoldMenu() {
     private var selectedObjectForScale = -1
     private var startedScrollObject = -1
     private var eventBusRegistered = false
+    private var selectionSnapshot: ModelSelectionSnapshot? = null
+    private var selectionLoadGeneration = 0
 
     init {
         fragment = bed
@@ -147,46 +151,50 @@ class TransformScaleMenu(private val bed: BedFragment) : UnfoldMenu() {
 
     private fun scaleVisual(target: TransformScaleValues) {
         val glView = bed.glView ?: return
-        val renderer = glView.renderer
-        val index = renderer.selectedObject
+        val snapshot = selectionSnapshot ?: return
+        val index = snapshot.primaryObject
         if (index < 0) return
         startedScrollObject = index
-        val model = renderer.model ?: return
+        glView.queueEvent {
+            val renderer = glView.renderer
+            if (!renderer.isSelectionSnapshotCurrent(snapshot)) return@queueEvent
+            val model = snapshot.model
 
-        runCatching {
-            val current = Vec3d()
-            val rotation = Vec3d()
-            model.getScale(index, current)
-            val scaleX = current.x
-            val scaleY = current.y
-            val scaleZ = current.z
+            runCatching {
+                val current = Vec3d()
+                val rotation = Vec3d()
+                model.getScale(index, current)
+                val scaleX = current.x
+                val scaleY = current.y
+                val scaleZ = current.z
 
-            model.getRotation(index, rotation)
-            val matrix = DoubleArray(16)
-            DoubleMatrix.setIdentityM(matrix, 0)
-            DoubleMatrix.rotateM(matrix, 0, Math.toDegrees(rotation.x), 1.0, 0.0, 0.0)
-            DoubleMatrix.rotateM(matrix, 0, Math.toDegrees(rotation.y), 0.0, 1.0, 0.0)
-            DoubleMatrix.rotateM(matrix, 0, Math.toDegrees(rotation.z), 0.0, 0.0, 1.0)
+                model.getRotation(index, rotation)
+                val matrix = DoubleArray(16)
+                DoubleMatrix.setIdentityM(matrix, 0)
+                DoubleMatrix.rotateM(matrix, 0, Math.toDegrees(rotation.x), 1.0, 0.0, 0.0)
+                DoubleMatrix.rotateM(matrix, 0, Math.toDegrees(rotation.y), 0.0, 1.0, 0.0)
+                DoubleMatrix.rotateM(matrix, 0, Math.toDegrees(rotation.z), 0.0, 0.0, 1.0)
 
-            val projectedScale = doubleArrayOf(scaleX, scaleY, scaleZ, 1.0)
-            DoubleMatrix.multiplyMV(projectedScale, 0, matrix, 0, projectedScale, 0)
-            val sx = abs(projectedScale[0] / projectedScale[3])
-            val sy = abs(projectedScale[1] / projectedScale[3])
-            val sz = abs(projectedScale[2] / projectedScale[3])
-            val dx = 1.0 / sx * target.x
-            val dy = 1.0 / sy * target.y
-            val dz = 1.0 / sz * target.z
-            if (listOf(dx, dy, dz).all { it.isFinite() && it > 0.0 }) {
-                renderer.setSelectionScale(dx, dy, dz)
-                glView.requestRender()
+                val projectedScale = doubleArrayOf(scaleX, scaleY, scaleZ, 1.0)
+                DoubleMatrix.multiplyMV(projectedScale, 0, matrix, 0, projectedScale, 0)
+                val sx = abs(projectedScale[0] / projectedScale[3])
+                val sy = abs(projectedScale[1] / projectedScale[3])
+                val sz = abs(projectedScale[2] / projectedScale[3])
+                val dx = 1.0 / sx * target.x
+                val dy = 1.0 / sy * target.y
+                val dz = 1.0 / sz * target.z
+                if (listOf(dx, dy, dz).all { it.isFinite() && it > 0.0 }) {
+                    renderer.setSelectionScale(dx, dy, dz)
+                    glView.requestRender()
+                }
             }
         }
     }
 
     private fun commitScale() {
         val glView = bed.glView ?: return
-        val renderer = glView.renderer
-        val index = renderer.selectedObject
+        val snapshot = selectionSnapshot ?: return
+        val index = snapshot.primaryObject
         if (index < 0 || (selectedObjectForScale >= 0 && index != selectedObjectForScale)) return
         val target = actualScale.value
         if (listOf(target.x, target.y, target.z).any { !it.isFinite() || it <= 0.0 }) return
@@ -194,11 +202,10 @@ class TransformScaleMenu(private val bed: BedFragment) : UnfoldMenu() {
 
         glView.queueEvent {
             val activeRenderer = glView.renderer
-            if (activeRenderer.selectedObject != index) return@queueEvent
-            val model = activeRenderer.model ?: return@queueEvent
+            if (!activeRenderer.isSelectionSnapshotCurrent(snapshot)) return@queueEvent
+            val model = snapshot.model
             runCatching {
                 val rotation = Vec3d()
-                val mirror = Vec3d()
                 model.getRotation(index, rotation)
                 val matrix = DoubleArray(16)
                 DoubleMatrix.setIdentityM(matrix, 0)
@@ -207,14 +214,10 @@ class TransformScaleMenu(private val bed: BedFragment) : UnfoldMenu() {
                 DoubleMatrix.rotateM(matrix, 0, Math.toDegrees(rotation.z), 0.0, 0.0, 1.0)
                 val values = doubleArrayOf(target.x, target.y, target.z, 1.0)
                 DoubleMatrix.multiplyMV(values, 0, matrix, 0, values, 0)
-                var dx = abs(values[0] / values[3])
-                var dy = abs(values[1] / values[3])
-                var dz = abs(values[2] / values[3])
+                val dx = abs(values[0] / values[3])
+                val dy = abs(values[1] / values[3])
+                val dz = abs(values[2] / values[3])
 
-                model.getMirror(index, mirror)
-                dx *= mirror.x
-                dy *= mirror.y
-                dz *= mirror.z
                 if (listOf(dx, dy, dz).all { it.isFinite() && it > 0.0 }) {
                     model.scale(index, dx, dy, dz)
                     model.ensureOnBed(index)
@@ -222,6 +225,8 @@ class TransformScaleMenu(private val bed: BedFragment) : UnfoldMenu() {
                     activeRenderer.setSelectionScale(1.0, 1.0, 1.0)
                     activeRenderer.invalidateGlModel(index)
                     glView.requestRender()
+                    bed.recordModelEditOnGl()
+                    ViewUtils.postOnMainThread { loadSelectionValues() }
                 }
             }
         }
@@ -287,47 +292,35 @@ class TransformScaleMenu(private val bed: BedFragment) : UnfoldMenu() {
     }
 
     private fun loadSelectionValues() {
-        val glView = bed.glView ?: return
-        val renderer = glView.renderer
-        val index = renderer.selectedObject
-        val model = renderer.model
-        if (index < 0 || model == null) {
-            hasSelection.value = false
-            selectedObjectForScale = -1
-            startedScrollObject = -1
-            return
-        }
-
-        runCatching {
-            renderer.setSelectionScale(1.0, 1.0, 1.0)
+        val view = bed.glView ?: return
+        val generation = ++selectionLoadGeneration
+        view.queueEvent {
+            val snapshot = view.renderer.captureSelectionSnapshot()
             val scale = Vec3d()
             val minimum = Vec3d()
             val maximum = Vec3d()
-            model.getScale(index, scale)
-            model.getBoundingBoxExact(index, minimum, maximum)
-            fun originalSize(low: Double, high: Double, factor: Double): Double =
-                abs(high - low) / abs(factor).coerceAtLeast(1e-12)
-
-            val factors = TransformScaleValues(scale.x, scale.y, scale.z)
-            val nextRulers = TransformScaleRulerValues(
-                TransformScalePolicy.roundedPercent(scale.x),
-                TransformScalePolicy.roundedPercent(scale.y),
-                TransformScalePolicy.roundedPercent(scale.z),
-            )
-            actualScale.value = factors
-            rulerValues.value = nextRulers
-            dimensionsMm.value = TransformScaleDimensions(
-                originalSize(minimum.x, maximum.x, scale.x),
-                originalSize(minimum.y, maximum.y, scale.y),
-                originalSize(minimum.z, maximum.z, scale.z),
-            )
-            linkOffsets = TransformScalePolicy.linkOffsets(nextRulers)
-            selectedObjectForScale = index
-            hasSelection.value = true
-            startedScrollObject = -1
-        }.onFailure {
-            hasSelection.value = false
-            selectedObjectForScale = -1
+            if (snapshot != null) {
+                view.renderer.setSelectionScale(1.0, 1.0, 1.0)
+                snapshot.model.getScale(snapshot.primaryObject, scale)
+                snapshot.model.getBoundingBoxExact(snapshot.primaryObject, minimum, maximum)
+            }
+            ViewUtils.postOnMainThread {
+                if (generation != selectionLoadGeneration || bed.glView !== view || !eventBusRegistered) return@postOnMainThread
+                selectionSnapshot = snapshot
+                hasSelection.value = snapshot != null
+                selectedObjectForScale = snapshot?.primaryObject ?: -1
+                startedScrollObject = -1
+                if (snapshot != null) {
+                    fun originalSize(low: Double, high: Double, factor: Double) = abs(high - low) / abs(factor).coerceAtLeast(1e-12)
+                    actualScale.value = TransformScaleValues(scale.x, scale.y, scale.z)
+                    val next = TransformScaleRulerValues(TransformScalePolicy.roundedPercent(scale.x),
+                        TransformScalePolicy.roundedPercent(scale.y), TransformScalePolicy.roundedPercent(scale.z))
+                    rulerValues.value = next
+                    linkOffsets = TransformScalePolicy.linkOffsets(next)
+                    dimensionsMm.value = TransformScaleDimensions(originalSize(minimum.x, maximum.x, scale.x),
+                        originalSize(minimum.y, maximum.y, scale.y), originalSize(minimum.z, maximum.z, scale.z))
+                }
+            }
         }
     }
 
@@ -384,22 +377,24 @@ class TransformScaleMenu(private val bed: BedFragment) : UnfoldMenu() {
         super.onDestroy()
         if (eventBusRegistered) SliceBeam.EVENT_BUS.unregisterListener(this)
         eventBusRegistered = false
+        selectionLoadGeneration++
+        selectionSnapshot = null
         stopScroll()
     }
 
     private fun stopScroll() {
-        val glView = bed.glView ?: return
-        if (startedScrollObject >= 0) {
-            glView.renderer.setSelectionScale(1.0, 1.0, 1.0)
-            glView.requestRender()
-        }
+        val view = bed.glView ?: return
+        view.queueEvent { view.renderer.setSelectionScale(1.0, 1.0, 1.0); view.requestRender() }
         startedScrollObject = -1
     }
 
     @EventHandler(runOnMainThread = true)
+    fun onObjectsListChanged(event: ObjectsListChangedEvent) { stopScroll(); loadSelectionValues() }
+
+    @EventHandler(runOnMainThread = true)
     fun onSelectedObjectChanged(event: SelectedObjectChangedEvent) {
         stopScroll()
-        if (bed.glView?.renderer?.selectedObject == -1) dismiss() else loadSelectionValues()
+        loadSelectionValues()
     }
 
     private fun TransformScaleValues.forAxis(axis: TransformScaleAxis): Double = when (axis) {
