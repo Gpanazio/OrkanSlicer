@@ -17,7 +17,7 @@ class ThreeMfProjectSettingsReaderTest {
         option("cool_plate_temp", INTS, 0f, 150f), option("textured_plate_temp", INTS, 0f, 150f),
         option("pressure_advance", FLOATS, 0f, 2f), option("enable_pressure_advance", BOOLS),
         option("filament_colour", STRINGS), option("filament_type", STRINGS), option("filament_start_gcode", STRINGS),
-        option("print_host", STRING), option("nozzle_diameter", FLOATS), option("z_offset", FLOAT),
+        option("print_host", STRING), option("host_type", STRING), option("printhost_apikey", STRING), option("printhost_webui", STRING), option("nozzle_diameter", FLOATS), option("z_offset", FLOAT),
         option("machine_start_gcode", STRING), option("compatible_printers", STRINGS),
     ).associateBy { it.key }
     private val filamentKeys = setOf("nozzle_temperature", "hot_plate_temp", "cool_plate_temp", "textured_plate_temp", "pressure_advance", "enable_pressure_advance",

@@ -122,9 +122,10 @@ class FileMenuObjectActions(private val fragment: BedFragment) {
             .setItems(choices) { _, which ->
                 val filament = which + 1 // libSlic3r object extruders are one-based.
                 fragment.glView!!.queueEvent {
-                    fragment.glView!!.renderer.setObjectBaseFilament(selected, filament)
+                    fragment.glView!!.renderer.setObjectUniformFilament(selected, filament)
                     fragment.glView!!.requestRender()
                     ViewUtils.postOnMainThread {
+                        fragment.updateModel()
                         Toast.makeText(
                             view.context,
                             view.context.getString(R.string.ModelContextFilamentSlotApplied, which),
