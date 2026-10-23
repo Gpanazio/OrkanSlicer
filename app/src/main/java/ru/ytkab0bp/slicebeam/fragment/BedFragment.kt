@@ -2,6 +2,7 @@ package ru.ytkab0bp.slicebeam.fragment
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.annotation.SuppressLint
+import ru.ytkab0bp.slicebeam.render.ModelSelectionSnapshot
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
@@ -43,7 +44,6 @@ import androidx.dynamicanimation.animation.SpringAnimation
 import androidx.dynamicanimation.animation.SpringForce
 import java.io.File
 import java.io.IOException
-import java.util.ArrayDeque
 import java.util.HashSet
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -164,9 +164,9 @@ private var profileStatusDescription by mutableStateOf("")
 private var profileStatusThemeRevision by mutableIntStateOf(0)
 private var compactPortraitLayout:Boolean = false
 private var sessionRestored:Boolean = false
-private val undoHistory = ArrayDeque<Model>()
-private val redoHistory = ArrayDeque<Model>()
-private var stableModelSnapshot: Model? = null
+private val modelEditHistory = ru.ytkab0bp.slicebeam.render.ModelEditHistory<Model>(
+    MAX_HISTORY, { Model.merge(it) }, { it.release() },
+)
 private var modelHistoryDisabledForMemory:Boolean = false
 private var largeModelWarningShown:Boolean = false
 @Volatile private var modelLoadInProgress:Boolean = false
@@ -417,7 +417,7 @@ Log.e("BedFragment", "Slice failed", failure)
         .setPositiveButton(android.R.string.ok, null)
         .show()
 }
-fun simplifySelectedObject(keepRatio:Float, maxTriangles:Int? = null) {
+internal fun simplifySelectedObject(keepRatio:Float, maxTriangles:Int? = null, expectedSelection: ModelSelectionSnapshot? = null) {
 val model = currentModel
 val selected = if (glView != null) glView!!.renderer.selectedObject else -1
 if (model == null || selected < 0) return
@@ -427,7 +427,8 @@ SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(
 SnackbarsLayout.Type.LOADING, R.string.ModelSimplifyRunning).tag(tag))
 view.queueEvent({ try
 {
-if (destroyed || view.renderer.model !== model || view.renderer.selectedObject != selected ||
+if ((expectedSelection != null && !view.renderer.isSelectionSnapshotCurrent(expectedSelection)) ||
+    destroyed || view.renderer.model !== model || view.renderer.selectedObject != selected ||
     selected >= model.objectsCount) {
     ViewUtils.postOnMainThread { SliceBeam.EVENT_BUS.fireEvent(NeedDismissSnackbarEvent(tag)) }
     return@queueEvent
@@ -462,42 +463,54 @@ SnackbarsLayout.Type.ERROR, R.string.ModelSimplifyFailed)) })
 }
 })
 }
-fun moveSelectedObjectToPlate(targetPlateIndex:Int, onComplete:Runnable) {
-val sourcePlateIndex = currentPlateIndex
-val selectedObject = glView!!.renderer.selectedObject
-val source = currentModel
-if ((source == null || selectedObject < 0 || targetPlateIndex < 0
-|| targetPlateIndex >= platesModels.size || targetPlateIndex == sourcePlateIndex))
-    return
-var target = platesModels.get(targetPlateIndex)
-if (target == null)
-{
-if (getProjectPlateId(targetPlateIndex) > 0 && currentProjectFile != null)
-{
-val sourceModel = source
-val sourceObject = selectedObject
-switchPlate(targetPlateIndex, true, { loadedTarget, firstObject, addedObjects->
-if (loadedTarget == null || sourceModel.objectsCount <= sourceObject) return@switchPlate
-glView!!.queueEvent({ val movedObject = loadedTarget.objectsCount
-loadedTarget.addObject(sourceModel, sourceObject)
-sourceModel.deleteObject(sourceObject)
-glView!!.renderer.resetGlModels()
-glView!!.requestRender()
-ViewUtils.postOnMainThread({ glView!!.selectModel(movedObject, { updateModel()
-if (onComplete != null) onComplete.run() }) }) }) })
-return
-}
-target = Model()
-platesModels.set(targetPlateIndex, target)
-}
-val finalTarget = target
-glView!!.queueEvent({ finalTarget.addObject(source, selectedObject)
-glView!!.renderer.deleteObject(selectedObject)
-glView!!.requestRender()
-ViewUtils.postOnMainThread({ switchPlate(targetPlateIndex)
-val movedObject = finalTarget.objectsCount - 1
-glView!!.selectModel(movedObject, { updateModel()
-if (onComplete != null) onComplete.run() }) }) })
+internal fun moveSelectedObjectToPlate(targetPlateIndex:Int, onComplete:Runnable, expectedSelection: ModelSelectionSnapshot? = null) {
+    val view = glView ?: return
+    view.queueEvent {
+        val renderer = view.renderer
+        val snapshot = expectedSelection ?: renderer.captureSelectionSnapshot() ?: return@queueEvent
+        if (!renderer.isSelectionSnapshotCurrent(snapshot)) return@queueEvent
+        val sourcePlate = currentPlateIndex
+        if (targetPlateIndex !in platesModels.indices || targetPlateIndex == sourcePlate) return@queueEvent
+        val source = snapshot.model
+        val selected = snapshot.primaryObject
+        var target = platesModels[targetPlateIndex]
+        if (target == null && getProjectPlateId(targetPlateIndex) > 0 && currentProjectFile != null) {
+            ViewUtils.postOnMainThread {
+                if (destroyed || glView !== view) return@postOnMainThread
+                switchPlate(targetPlateIndex, true, { loaded, _, _ ->
+                    if (loaded == null) return@switchPlate
+                    view.queueEvent commit@{
+                        if (renderer.model !== loaded || currentPlateIndex != targetPlateIndex ||
+                            platesModels.getOrNull(sourcePlate) !== source ||
+                            source.geometryRevision != snapshot.geometryRevision ||
+                            source.objectsCount != snapshot.objectCount) return@commit
+                        val moved = loaded.objectsCount
+                        loaded.addObject(source, selected)
+                        source.deleteObject(selected)
+                        renderer.resetGlModels()
+                        renderer.setSelectedObject(moved)
+                        view.requestRender()
+                        recordModelEditOnGl()
+                        ViewUtils.postOnMainThread { onComplete.run() }
+                    }
+                })
+            }
+            return@queueEvent
+        }
+        if (target == null) {
+            target = Model()
+            platesModels[targetPlateIndex] = target
+        }
+        val moved = target.objectsCount
+        target.addObject(source, selected)
+        renderer.deleteObject(selected)
+        view.requestRender()
+        ViewUtils.postOnMainThread {
+            if (destroyed || glView !== view) return@postOnMainThread
+            switchPlate(targetPlateIndex)
+            view.selectModel(moved) { updateModel(); onComplete.run() }
+        }
+    }
 }
 override fun onCreate() {
 super.onCreate()
@@ -621,6 +634,17 @@ currentUnfoldMenu = menu
 menu.show(from, this)
 }
 private fun showModelContextMenu(objectIndex:Int) {
+    val view = glView ?: return
+    view.queueEvent {
+        val snapshot = view.renderer.captureSelectionSnapshot() ?: return@queueEvent
+        if (snapshot.primaryObject != objectIndex) return@queueEvent
+        ViewUtils.postOnMainThread {
+            if (!destroyed && glView === view) showModelContextMenuBound(snapshot)
+        }
+    }
+}
+private fun showModelContextMenuBound(expected: ModelSelectionSnapshot) {
+val objectIndex = expected.primaryObject
 val ctx = getContext()
 if (ctx == null || glView == null || objectIndex == -1) return
 if (currentUnfoldMenu != null)
@@ -629,76 +653,124 @@ currentUnfoldMenu!!.dismiss()
 }
 BeamAlertDialogBuilder(ctx)
 .setTitle(R.string.ModelContextMenuTitle)
-.setItems(arrayOf<CharSequence>(ctx.getString(R.string.ModelContextDuplicate), ctx.getString(R.string.MenuToolbarSplit), ctx.getString(R.string.MenuFileMoveToPlate), ctx.getString(R.string.ModelContextDelete), ctx.getString(R.string.ModelContextFillBed), ctx.getString(R.string.ModelContextCenterOnBed), ctx.getString(R.string.ModelContextAutoOrient), ctx.getString(R.string.ModelContextResetRotation), ctx.getString(R.string.ModelContextResetScale), ctx.getString(R.string.ModelContextSetOnFace), ctx.getString(R.string.ModelContextSelectAll), ctx.getString(R.string.ModelContextDeleteAll)), { dialog, which-> when (which) {
-0 // Duplicate
--> glView!!.duplicateSelectedModel({ updateModel()
-Toast.makeText(ctx, R.string.ModelContextDuplicated, Toast.LENGTH_SHORT).show() })
-1 // Separate parts
--> splitSelectedObject()
-2 // Move to another plate
--> ru.ytkab0bp.slicebeam.components.bed_menu.FileMenuObjectActions(this).showMoveToPlateDialog(glView!!)
-3 // Delete
--> glView!!.deleteSelectedModel({ updateModel()
-Toast.makeText(ctx, R.string.ModelContextDeleted, Toast.LENGTH_SHORT).show() })
-4 // Fill Bed
--> glView!!.fillBedWithSelectedModel({ addedCopies->
-updateModel()
-Toast.makeText(ctx,
-if (addedCopies > 0)
-ctx.getResources().getQuantityString(
-R.plurals.ModelContextFillBedFinished,
-addedCopies, addedCopies)
-else
-ctx.getString(R.string.ModelContextFillBedNoRoom),
-Toast.LENGTH_SHORT).show() })
-5 // Center on Bed
--> glView!!.centerSelectedOnBed({ updateModel()
-Toast.makeText(ctx, R.string.ModelContextCentered, Toast.LENGTH_SHORT).show() })
-6 // Auto-orient
--> glView!!.queueEvent({ glView!!.renderer.model!!.autoOrient(objectIndex)
-glView!!.renderer.model!!.ensureOnBed(objectIndex)
-glView!!.renderer.invalidateGlModel(objectIndex)
-glView!!.requestRender()
-ViewUtils.postOnMainThread({ updateModel()
-Toast.makeText(ctx, R.string.ModelContextAutoOriented, Toast.LENGTH_SHORT).show() }) })
-7 // Reset Rotation
--> glView!!.queueEvent({ glView!!.renderer.setSelectionRotation((0).toDouble(), (0).toDouble(), (0).toDouble())
-glView!!.renderer.model!!.ensureOnBed(objectIndex)
-glView!!.renderer.invalidateSelectionObject()
-glView!!.requestRender()
-ViewUtils.postOnMainThread({ updateModel()
-Toast.makeText(ctx, R.string.ModelContextResetRotationDone, Toast.LENGTH_SHORT).show() }) })
-8 // Reset Scale
--> glView!!.queueEvent({ glView!!.renderer.setSelectionScale((1).toDouble(), (1).toDouble(), (1).toDouble())
-glView!!.renderer.model!!.ensureOnBed(objectIndex)
-glView!!.renderer.invalidateSelectionObject()
-glView!!.requestRender()
-ViewUtils.postOnMainThread({ updateModel()
-Toast.makeText(ctx, R.string.ModelContextResetScaleDone, Toast.LENGTH_SHORT).show() }) })
-9 // Lay on face (enter flatten mode)
--> glView!!.queueEvent({ glView!!.renderer.setInFlattenMode(true)
-glView!!.requestRender() })
-10 // Select All
--> glView!!.selectAllModels({ updateModel()
-Toast.makeText(ctx, R.string.ModelContextSelectedAll, Toast.LENGTH_SHORT).show() })
-11 // Delete All
--> glView!!.deleteAllModels({ updateModel()
-Toast.makeText(ctx, R.string.ModelContextDeletedAll, Toast.LENGTH_SHORT).show() })
-} })
+.setItems(arrayOf<CharSequence>(ctx.getString(R.string.ModelContextDuplicate), ctx.getString(R.string.MenuToolbarSplit), ctx.getString(R.string.MenuFileMoveToPlate), ctx.getString(R.string.ModelContextDelete), ctx.getString(R.string.ModelContextFillBed), ctx.getString(R.string.ModelContextCenterOnBed), ctx.getString(R.string.ModelContextAutoOrient), ctx.getString(R.string.ModelContextResetRotation), ctx.getString(R.string.ModelContextResetScale), ctx.getString(R.string.ModelContextSetOnFace), ctx.getString(R.string.ModelContextSelectAll), ctx.getString(R.string.ModelContextDeleteAll)), { _, which -> executeModelContextAction(expected, which, ctx) })
 .setNegativeButton(android.R.string.cancel, null)
 .show()
 }
+private fun executeModelContextAction(snapshot: ModelSelectionSnapshot, which: Int, ctx: android.content.Context) {
+    val view = glView ?: return
+    view.queueEvent {
+        val renderer = view.renderer
+        if (!renderer.isSelectionSnapshotCurrent(snapshot)) return@queueEvent
+        val model = snapshot.model
+        val index = snapshot.primaryObject
+        val message = when (which) {
+            0 -> { renderer.duplicateSelectedObject(); R.string.ModelContextDuplicated }
+            1 -> { splitSelectedObject(snapshot); return@queueEvent }
+            2 -> {
+                ViewUtils.postOnMainThread {
+                    ru.ytkab0bp.slicebeam.components.bed_menu.FileMenuObjectActions(this).showMoveToPlateDialog(view, snapshot)
+                }
+                return@queueEvent
+            }
+            3 -> { renderer.deleteObject(index); R.string.ModelContextDeleted }
+            4 -> {
+                val count = renderer.fillBedWithSelectedObject()
+                view.requestRender()
+                recordModelEditOnGl()
+                ViewUtils.postOnMainThread {
+                    Toast.makeText(ctx, if (count > 0) ctx.resources.getQuantityString(
+                        R.plurals.ModelContextFillBedFinished, count, count) else ctx.getString(R.string.ModelContextFillBedNoRoom),
+                        Toast.LENGTH_SHORT).show()
+                }
+                return@queueEvent
+            }
+            5 -> { renderer.centerSelectionOnBed(); R.string.ModelContextCentered }
+            6 -> { model.autoOrient(index); renderer.invalidateGlModel(index); R.string.ModelContextAutoOriented }
+            // Keep the legacy preview reset; a committed rotation reset needs missing JNI.
+            7 -> { renderer.setSelectionRotation(0.0, 0.0, 0.0); model.ensureOnBed(index)
+                renderer.invalidateSelectionObject(); R.string.ModelContextResetRotationDone }
+            8 -> { model.scale(index, 1.0, 1.0, 1.0); model.ensureOnBed(index)
+                renderer.setSelectionScale(1.0, 1.0, 1.0); renderer.invalidateGlModel(index); R.string.ModelContextResetScaleDone }
+            9 -> { renderer.setInFlattenMode(true); view.requestRender(); return@queueEvent }
+            10 -> { renderer.selectAllObjects(); R.string.ModelContextSelectedAll }
+            11 -> { renderer.deleteAllObjects(); R.string.ModelContextDeletedAll }
+            else -> return@queueEvent
+        }
+        view.requestRender()
+        recordModelEditOnGl()
+        ViewUtils.postOnMainThread { Toast.makeText(ctx, message, Toast.LENGTH_SHORT).show() }
+    }
+}
 fun showSelectedModelContextMenu() {
-    showModelContextMenu(glView?.renderer?.selectedObject ?: -1)
+    val view = glView ?: return
+    view.queueEvent {
+        val snapshot = view.renderer.captureSelectionSnapshot() ?: return@queueEvent
+        ViewUtils.postOnMainThread { if (!destroyed && glView === view) showModelContextMenuBound(snapshot) }
+    }
+}
+/** GL-thread import commit: seed undo from geometry, never from an empty placeholder. */
+private fun onModelImportCommitted() {
+    resetModelHistoryOnGl()
+    platePreviewRevision++
+    ViewUtils.postOnMainThread { updatePlateIndicator() }
+}
+
+fun resetModelScale(objectIndex: Int? = null, onReset: () -> Unit = {}) {
+    val view = glView ?: return
+    view.queueEvent {
+        val renderer = view.renderer
+        val model = renderer.model ?: return@queueEvent
+        val index = objectIndex ?: renderer.selectedObject
+        if (index !in 0 until model.objectsCount) return@queueEvent
+        model.scale(index, 1.0, 1.0, 1.0)
+        model.ensureOnBed(index)
+        renderer.setSelectionScale(1.0, 1.0, 1.0)
+        renderer.invalidateGlModel(index)
+        view.requestRender()
+        recordModelEditOnGl()
+        ViewUtils.postOnMainThread { onReset() }
+    }
 }
 @JvmOverloads fun enterPaintMode(objectIndex:Int, mode:Int = ru.ytkab0bp.slicebeam.render.GLRenderer.PAINT_MODE_COLOR) {
-val ctx = getContext()
-if (ctx == null || glView == null || objectIndex == -1 || paintModeView != null) return
-if (!requirePreciseSurfaceModel(objectIndex)) return
-glView!!.queueEvent({ glView!!.renderer.beginPaint(objectIndex, mode)
-glView!!.requestRender() })
-paintModeView = ru.ytkab0bp.slicebeam.view.PaintModeView(ctx, glView!!, Runnable { exitPaintMode() }, mode)
-overlayLayout!!.addView(paintModeView, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    requestPaintMode(objectIndex, mode)
+}
+internal fun enterPaintModeForCurrentSelection(mode: Int) { requestPaintMode(null, mode) }
+private fun requestPaintMode(expectedObject: Int?, mode: Int) {
+    val view = glView ?: return
+    val ctx = getContext() ?: return
+    if (paintModeView != null) return
+    view.queueEvent {
+        val snapshot = view.renderer.captureSelectionSnapshot() ?: return@queueEvent
+        if (expectedObject != null && snapshot.primaryObject != expectedObject) return@queueEvent
+        val triangles = snapshot.model.getTriangleCount(snapshot.primaryObject)
+        ViewUtils.postOnMainThread {
+            if (destroyed || glView !== view || paintModeView != null || overlayLayout == null) return@postOnMainThread
+            if (LargeModelPick.needsPreciseSurfaceSimplification(triangles)) {
+                BeamAlertDialogBuilder(ctx)
+                    .setTitle(R.string.LargeModelSurfaceTitle)
+                    .setMessage(ctx.getString(R.string.LargeModelSurfaceMessage, triangles, LargeModelPick.TRIANGLE_LIMIT))
+                    .setPositiveButton(R.string.ModelSimplifyStart) { _, _ ->
+                        simplifySelectedObject(LargeModelPick.suggestedKeepRatio(triangles),
+                            LargeModelPick.TRIANGLE_LIMIT, snapshot)
+                    }
+                    .setNegativeButton(android.R.string.cancel, null).show()
+                return@postOnMainThread
+            }
+            view.queueEvent {
+                if (!view.renderer.isSelectionSnapshotCurrent(snapshot)) return@queueEvent
+                view.renderer.beginPaint(snapshot.primaryObject, mode)
+                view.requestRender()
+                ViewUtils.postOnMainThread {
+                    if (!destroyed && glView === view && paintModeView == null && overlayLayout != null) {
+                        paintModeView = ru.ytkab0bp.slicebeam.view.PaintModeView(ctx, view, Runnable { exitPaintMode() }, mode)
+                        overlayLayout!!.addView(paintModeView, FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                    }
+                }
+            }
+        }
+    }
 }
 private fun exitPaintMode() {
 if (paintModeView != null)
@@ -1819,7 +1891,7 @@ if (destroyed || modelLoadInProgress)
 {
 if (callback != null)
     ViewUtils.postOnMainThread({ callback?.onFailed(
-IllegalStateException("Ein anderes Modell wird gerade geladen.")) })
+IllegalStateException("Another model is already being loaded.")) })
 return
 }
 modelLoadInProgress = true
@@ -1937,6 +2009,7 @@ first.translate(o, -origin[0], -origin[1], (0).toDouble())
 first.resetBoundingBox()
 glView!!.renderer.model = first
 glView!!.renderer.resetGlModels()
+onModelImportCommitted()
 if (finalCallback != null)
 {
 finalCallback.onLoaded(first, 0, first.objectsCount)
@@ -2012,6 +2085,7 @@ if (!preserveProjectLayout)
 bed.arrange(currentModel)
 }
 glView!!.renderer.resetGlModels()
+onModelImportCommitted()
 if (callback != null)
 {
 callback?.onLoaded(currentModel, firstNewObject, addedObjects)
@@ -2070,6 +2144,7 @@ m.getBoundingBoxExact(i, objMin, objMax)
 bed.arrange(m)
 }
 glView!!.renderer.resetGlModels()
+onModelImportCommitted()
 if (callback != null)
 {
 callback?.onLoaded(m, 0, addedObjects)
@@ -2112,11 +2187,16 @@ currentMenu.onViewCreated(currentMenu.onCreateView(ctx, portrait))
 menuView.addView(currentMenu.getView(), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 }
 fun updateModel() {
-if (platesModels.isEmpty()) return
+val view = glView ?: return
+view.queueEvent { recordModelEditOnGl() }
+}
+/** Capture history at the mutation commit, before another GL edit can run. */
+internal fun recordModelEditOnGl() {
+if (destroyed || platesModels.isEmpty()) return
 platePreviewRevision++
 val currentModel = glView!!.renderer.model
 platesModels.set(currentPlateIndex, currentModel)
-updatePlateIndicator()
+ViewUtils.postOnMainThread { updatePlateIndicator() }
 if (!modelLoadInProgress && platesModels.all { it != null && it.objectsCount == 0 }) TemporaryProjectSettings.clear()
 if (isLargeModelInMemory)
 {
@@ -2126,13 +2206,7 @@ warnLargeModelLimitOnce()
 return
 }
 modelHistoryDisabledForMemory = false
-if (stableModelSnapshot != null)
-{
-undoHistory.addLast(stableModelSnapshot)
-while (undoHistory.size > MAX_HISTORY) undoHistory.removeFirst().release()
-}
-clearHistoryDeque(redoHistory)
-stableModelSnapshot = if (currentModel != null) Model.merge(currentModel) else null
+modelEditHistory.record(currentModel)
 }
 private fun syncCurrentModel() {
 if (!platesModels.isEmpty() && glView != null)
@@ -2141,6 +2215,10 @@ platesModels.set(currentPlateIndex, glView!!.renderer.model)
 }
 }
 private fun resetModelHistory() {
+val view = glView ?: return
+view.queueEvent { resetModelHistoryOnGl() }
+}
+private fun resetModelHistoryOnGl() {
 clearModelHistory()
 modelHistoryDisabledForMemory = isLargeModelInMemory
 if (modelHistoryDisabledForMemory)
@@ -2149,7 +2227,7 @@ warnLargeModelLimitOnce()
 return
 }
 val current = if (glView != null) glView!!.renderer.model else null
-stableModelSnapshot = if (current != null) Model.merge(current) else null
+modelEditHistory.seed(current)
 }
 private fun warnLargeModelLimitOnce() {
 if (largeModelWarningShown) return
@@ -2157,66 +2235,51 @@ largeModelWarningShown = true
 ViewUtils.postOnMainThread({ SliceBeam.EVENT_BUS.fireEvent(
 NeedSnackbarEvent(R.string.ModelLargeMemoryProtection)) })
 }
-private fun clearModelHistory() {
-clearHistoryDeque(undoHistory)
-clearHistoryDeque(redoHistory)
-if (stableModelSnapshot != null)
-{
-stableModelSnapshot!!.release()
-stableModelSnapshot = null
+private fun clearModelHistory() { modelEditHistory.clear() }
+fun undoModelEdit() { applyModelHistory(false, R.string.ModelNothingToUndo) }
+fun redoModelEdit() { applyModelHistory(true, R.string.ModelNothingToRedo) }
+private fun applyModelHistory(redo: Boolean, emptyMessage: Int) {
+val view = glView ?: return
+view.queueEvent {
+    if (destroyed) return@queueEvent
+    if (modelHistoryDisabledForMemory) { warnLargeModelLimitOnce(); return@queueEvent }
+    val current = view.renderer.model
+    val restored = if (redo) modelEditHistory.redo(current) else modelEditHistory.undo(current)
+    if (restored == null) {
+        ViewUtils.postOnMainThread { SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(emptyMessage)) }
+        return@queueEvent
+    }
+    view.renderer.model = restored.value
+    platesModels.set(currentPlateIndex, restored.value)
+    current?.release()
+    view.requestRender()
+    ViewUtils.postOnMainThread { SliceBeam.EVENT_BUS.fireEvent(ru.ytkab0bp.slicebeam.events.ObjectsListChangedEvent()) }
 }
-}
-private fun clearHistoryDeque(history:ArrayDeque<Model>) {
-while (!history.isEmpty()) history.removeFirst().release()
-}
-fun undoModelEdit() {
-applyModelHistory(undoHistory, redoHistory, R.string.ModelNothingToUndo)
-}
-fun redoModelEdit() {
-applyModelHistory(redoHistory, undoHistory, R.string.ModelNothingToRedo)
-}
-private fun applyModelHistory(source:ArrayDeque<Model>, destination:ArrayDeque<Model>, emptyMessage:Int) {
-if (modelHistoryDisabledForMemory)
-{
-warnLargeModelLimitOnce()
-return
-}
-if (source.isEmpty())
-{
-SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(emptyMessage))
-return
-}
-glView!!.queueEvent({ val current = glView!!.renderer.model
-if (current != null) destination.addLast(Model.merge(current))
-while (destination.size > MAX_HISTORY) destination.removeFirst().release()
-val restored = source.removeLast()
-glView!!.renderer.model = restored
-platesModels.set(currentPlateIndex, restored)
-if (current != null) current.release()
-if (stableModelSnapshot != null) stableModelSnapshot!!.release()
-stableModelSnapshot = Model.merge(restored)
-glView!!.requestRender()
-ViewUtils.postOnMainThread({ SliceBeam.EVENT_BUS.fireEvent(ru.ytkab0bp.slicebeam.events.ObjectsListChangedEvent()) }) })
 }
 /** Split the selected object into separate objects while preserving the imported layout. */
- fun splitSelectedObject() {
-val idx = glView!!.renderer.selectedObject
-val model = glView!!.renderer.model
-if (model == null || idx == -1) return
-glView!!.queueEvent({ val count = model.split(idx)
-if (count <= 1)
-{
-SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(R.string.MenuToolbarSplitNothing))
-return@queueEvent
+ internal fun splitSelectedObject(expectedSelection: ModelSelectionSnapshot? = null) {
+val view = glView ?: return
+view.queueEvent {
+    val renderer = view.renderer
+    if (expectedSelection != null && !renderer.isSelectionSnapshotCurrent(expectedSelection)) return@queueEvent
+    val model = renderer.model ?: return@queueEvent
+    val idx = renderer.selectedObject
+    if (idx !in 0 until model.objectsCount) return@queueEvent
+    val count = model.split(idx)
+    if (count <= 1) {
+        ViewUtils.postOnMainThread { SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(R.string.MenuToolbarSplitNothing)) }
+        return@queueEvent
+    }
+    renderer.setSelectedObject(-1)
+    renderer.resetGlModels()
+    view.requestRender()
+    recordModelEditOnGl()
+    ViewUtils.postOnMainThread {
+        SliceBeam.EVENT_BUS.fireEvent(ru.ytkab0bp.slicebeam.events.ObjectsListChangedEvent())
+        SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(SliceBeam.INSTANCE!!.getResources().getQuantityString(
+            R.plurals.MenuToolbarSplitDone, count, count)))
+    }
 }
-glView!!.renderer.setSelectedObject(-1)
-glView!!.renderer.resetGlModels()
-glView!!.requestRender()
-ViewUtils.postOnMainThread({ updateModel()
-SliceBeam.EVENT_BUS.fireEvent(ru.ytkab0bp.slicebeam.events.ObjectsListChangedEvent())
-SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(
-SliceBeam.INSTANCE!!.getResources().getQuantityString(
-R.plurals.MenuToolbarSplitDone, count, count))) }) })
 }
 enum class MenuCategory private constructor(
 internal val titleRes:Int,
