@@ -67,7 +67,7 @@ class OrcaFilamentSettingsCatalogTest {
     }
 
     @Test
-    fun duplicatePlateTemperaturesAndDeveloperOnlyControlsStayHidden() {
+    fun surfaceTemperaturesAreEditableAndDeveloperOnlyControlsStayHidden() {
         val filamentKeys = OrcaFilamentSettingsCatalog.filamentKeys().toSet()
         val duplicatePlateTemperatures = setOf(
             "cool_plate_temp", "textured_cool_plate_temp", "eng_plate_temp", "textured_plate_temp",
@@ -76,7 +76,7 @@ class OrcaFilamentSettingsCatalogTest {
         )
 
         duplicatePlateTemperatures.forEach { key ->
-            assertFalse("$key should not duplicate the single general bed-temperature control", key in filamentKeys)
+            assertTrue("$key must be independently editable", key in filamentKeys)
         }
         assertFalse(
             "The native adaptive volumetric-speed option is marked experimental and incomplete",

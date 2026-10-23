@@ -23,7 +23,10 @@ class PrintConfigDef @Keep constructor() {
             "tilt_down_initial_speed",
             "tilt_down_finish_speed",
             "tower_speed",
-        )
+            // If absent, the native bridge selects Orkan's established PEI/high-temp default.
+            "curr_bed_type",
+        ) + listOf("cool_plate", "eng_plate", "textured_plate", "textured_cool_plate", "supertack_plate")
+            .flatMap { listOf("${it}_temp", "${it}_temp_initial_layer") }
 
         private var instance: PrintConfigDef? = null
         private val clzMap = HashMap<String, Class<*>>()
@@ -62,6 +65,7 @@ class PrintConfigDef @Keep constructor() {
             "solid_infill_extrusion_width" to "Inner solid infill line width",
             "top_infill_extrusion_width" to "Top surface line width",
             "support_material_extrusion_width" to "Support line width",
+            "bridge_line_width" to "Bridge line width",
             // Speed
             "perimeter_speed" to "Inner wall speed",
             "small_perimeter_speed" to "Small perimeter speed",
@@ -157,6 +161,8 @@ class PrintConfigDef @Keep constructor() {
             for ((key, label) in orcaLabels) {
                 def.options[key]?.label = label
             }
+            def.options["bridge_line_width"]?.tooltip =
+                "Bridge line width in mm or % of the nozzle diameter. Maximum: nozzle diameter. 0 uses the internal solid infill width."
 
             val brimTypeOption = def.options["brim_type"] ?: return
             val originalValues = brimTypeOption.enumValues ?: return

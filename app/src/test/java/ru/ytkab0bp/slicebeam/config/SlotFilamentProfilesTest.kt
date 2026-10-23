@@ -26,7 +26,7 @@ class SlotFilamentProfilesTest {
             "hot_plate_temp" to ConfigOptionDef().apply { key = "hot_plate_temp"; type = ConfigOptionType.INTS },
         )
 
-        SlotFilamentProfiles.applyProfileVectors(target, ordered, definitions, temperatureOnly = true)
+        SlotFilamentProfiles.applyProfileVectors(target, ordered, definitions, ownValuesOnly = true)
 
         assertEquals("245,205", target["nozzle_temperature"])
         assertEquals("80,55", target["hot_plate_temp"])
@@ -55,5 +55,26 @@ class SlotFilamentProfilesTest {
         assertEquals("205,245", target["nozzle_temperature"])
         assertEquals("0.02,0.05", target["pressure_advance"])
         assertEquals("0.10", target["z_offset"])
+    }
+
+    @Test fun ownPressureValuesAndEnableFlagsReplaceImportedProjectVectors() {
+        val own = listOf(
+            ConfigObject("PLA").apply { put("pressure_advance", "0.035"); put("enable_pressure_advance", "1") },
+            ConfigObject("PETG").apply { put("pressure_advance", "0.065"); put("enable_pressure_advance", "1") },
+        )
+        val target = ConfigObject().apply {
+            put("pressure_advance", "0.01,0.02")
+            put("enable_pressure_advance", "0,0")
+            put("filament_colour", "#112233;#AABBCC")
+        }
+        val definitions = mapOf(
+            "pressure_advance" to ConfigOptionDef().apply { key = "pressure_advance"; type = ConfigOptionType.FLOATS },
+            "enable_pressure_advance" to ConfigOptionDef().apply { key = "enable_pressure_advance"; type = ConfigOptionType.BOOLS },
+            "filament_colour" to ConfigOptionDef().apply { key = "filament_colour"; type = ConfigOptionType.STRINGS },
+        )
+        SlotFilamentProfiles.applyProfileVectors(target, own, definitions, ownValuesOnly = true)
+        assertEquals("0.035,0.065", target["pressure_advance"])
+        assertEquals("1,1", target["enable_pressure_advance"])
+        assertEquals("#112233;#AABBCC", target["filament_colour"])
     }
 }

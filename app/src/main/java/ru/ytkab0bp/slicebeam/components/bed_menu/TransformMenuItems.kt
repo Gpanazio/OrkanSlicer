@@ -5,6 +5,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.FrameLayout
+import ru.ytkab0bp.slicebeam.render.ModelSelectionSnapshot
 import ru.ytkab0bp.slicebeam.R
 import ru.ytkab0bp.slicebeam.SliceBeam
 import ru.ytkab0bp.slicebeam.components.BeamAlertDialogBuilder
@@ -77,12 +78,18 @@ internal class TransformMenuItems(
                 enabled = availability.canArrange,
             ),
             selectionAction(R.string.MenuOrientationAutoOrient, R.drawable.menu_orientation_auto_28, availability) {
-                val index = renderer.selectedObject
-                if (index != -1) {
-                    renderer.model!!.autoOrient(index)
+                val view = fragment.glView ?: return@selectionAction
+                view.queueEvent {
+                    val model = renderer.model ?: return@queueEvent
+                    val index = renderer.selectedObject
+                    if (index !in 0 until model.objectsCount) return@queueEvent
+                    model.autoOrient(index)
                     renderer.invalidateGlModel(index)
-                    fragment.glView!!.requestRender()
-                    SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(R.string.MenuOrientationAutoOrientDone))
+                    view.requestRender()
+                    fragment.recordModelEditOnGl()
+                    ViewUtils.postOnMainThread {
+                        SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(R.string.MenuOrientationAutoOrientDone))
+                    }
                 }
             },
             selectionAction(R.string.MenuToolbarMove, R.drawable.menu_orientation_position_28, availability) {
@@ -106,8 +113,9 @@ internal class TransformMenuItems(
                 R.drawable.menu_orientation_flatten_28,
                 {
                     flattenEnabled = !flattenEnabled
-                    renderer.setInFlattenMode(flattenEnabled)
-                    fragment.glView!!.requestRender()
+                    val flatten = flattenEnabled
+                    val view = fragment.glView ?: return@BedComposeMenuAction
+                    view.queueEvent { renderer.setInFlattenMode(flatten); view.requestRender() }
                     onItemsChanged()
                 },
                 selected = flattenEnabled,
@@ -162,12 +170,21 @@ internal class TransformMenuItems(
 
     private fun paintAction(titleRes: Int, mode: Int, availability: ModelSelectionAvailability) =
         selectionAction(titleRes, R.drawable.paint_roller_outline_28, availability) {
-            val objectIndex = fragment.glView!!.renderer.selectedObject
-            if (objectIndex != -1) fragment.enterPaintMode(objectIndex, mode)
+            fragment.enterPaintModeForCurrentSelection(mode)
         }
 
     private fun showSimplifyDialog(view: View) {
-        val triangles = fragment.selectedTriangleCount
+        val viewport = fragment.glView ?: return
+        viewport.queueEvent {
+            val snapshot = viewport.renderer.captureSelectionSnapshot() ?: return@queueEvent
+            val triangles = snapshot.model.getTriangleCount(snapshot.primaryObject)
+            ViewUtils.postOnMainThread {
+                if (fragment.glView === viewport && fragment.getContext() != null) showSimplifyDialogBound(view, triangles, snapshot)
+            }
+        }
+    }
+
+    private fun showSimplifyDialogBound(view: View, triangles: Int, snapshot: ModelSelectionSnapshot) {
         if (triangles <= 4) return
         val context = view.context
         val ratios = floatArrayOf(0.75f, 0.50f, 0.25f)
@@ -186,16 +203,16 @@ internal class TransformMenuItems(
             .setPositiveButton(R.string.ModelSimplifyStart) { _, _ ->
                 val choice = selected.get()
                 if (choice < ratios.size) {
-                    fragment.simplifySelectedObject(ratios[choice])
+                    fragment.simplifySelectedObject(ratios[choice], expectedSelection = snapshot)
                 } else {
-                    showCustomSimplifyDialog(view, triangles)
+                    showCustomSimplifyDialog(view, triangles, snapshot)
                 }
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
     }
 
-    private fun showCustomSimplifyDialog(view: View, triangles: Int) {
+    private fun showCustomSimplifyDialog(view: View, triangles: Int, snapshot: ModelSelectionSnapshot) {
         val input = EditText(view.context).apply {
             inputType = InputType.TYPE_CLASS_NUMBER
             setText(max(4, triangles / 2).toString())
@@ -219,7 +236,7 @@ internal class TransformMenuItems(
             .setPositiveButton(R.string.ModelSimplifyStart) { _, _ ->
                 val target = (input.text.toString().toIntOrNull() ?: triangles / 2)
                     .coerceIn(4, triangles - 1)
-                fragment.simplifySelectedObject(target.toFloat() / triangles.toFloat())
+                fragment.simplifySelectedObject(target.toFloat() / triangles.toFloat(), expectedSelection = snapshot)
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()

@@ -88,8 +88,8 @@ object SlotFilamentProfiles {
     internal fun profileSlotForTool(tool: Int, gates: IntArray?, storedSlotCount: Int): Int =
         gates?.getOrNull(tool)?.takeIf { it in 0 until storedSlotCount } ?: tool
 
-    /** An imported 3MF is temporary, but explicit own slot temperatures still win. */
-    fun applyOwnTemperaturesTo(target: ConfigObject, config: Slic3rConfigWrapper, count: Int) {
+    /** An imported 3MF is temporary; the selected own slot owns heat and pressure compensation. */
+    fun applyOwnFilamentSettingsTo(target: ConfigObject, config: Slic3rConfigWrapper, count: Int) {
         if (count <= 0) return
         val slots = Prefs.getStoredFilamentSlots()
         val printerTitle = config.presets?.get("printer").orEmpty()
@@ -100,13 +100,13 @@ object SlotFilamentProfiles {
             val title = titleFor(slot, null)
             title?.let(config::findFilament)
         }
-        applyProfileVectors(target, profiles, PrintConfigDef.getInstance().options, temperatureOnly = true)
+        applyProfileVectors(target, profiles, PrintConfigDef.getInstance().options, ownValuesOnly = true)
     }
 
     internal fun applyProfileVectors(target: ConfigObject, profiles: List<ConfigObject?>,
-                                     definitions: Map<String, ConfigOptionDef>, temperatureOnly: Boolean = false) {
+                                     definitions: Map<String, ConfigOptionDef>, ownValuesOnly: Boolean = false) {
         for ((key, definition) in definitions) {
-            if (temperatureOnly && !OwnFilamentTemperatureProfiles.isTemperatureKey(key)) continue
+            if (ownValuesOnly && !OwnFilamentTemperatureProfiles.isOwnFilamentOverrideKey(key)) continue
             if (!definition.type.list || profiles.none { it?.has(key) == true }) continue
             val fallback = TemporaryProjectSettings.splitValue(target[key].orEmpty(), definition.type)
             val values = profiles.mapIndexed { index, profile ->

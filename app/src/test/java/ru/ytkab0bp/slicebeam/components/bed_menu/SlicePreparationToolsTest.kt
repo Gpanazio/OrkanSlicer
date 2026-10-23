@@ -115,6 +115,46 @@ class SlicePreparationToolsTest {
         assertFalse(SlicePreparationTools.materialMatchesSlicedFile("PLA", null))
     }
 
+    @Test
+    fun reportsExecutablePressureAdvanceSeparatelyFromMetadataAndStartCode() {
+        val file = File.createTempFile("slice-pressure-advance", ".gcode")
+        try {
+            file.writeText("""
+                ; pressure_advance = 0.09,0.10
+                ; SET_PRESSURE_ADVANCE ADVANCE=0.11
+                SET_PRESSURE_ADVANCE ; ADVANCE=0.99
+                M900 K0.051
+                SET_PRESSURE_ADVANCE ADVANCE=0.04; Override pressure advance value
+                G1 X10 Y10
+                SET_PRESSURE_ADVANCE ADVANCE=0.06; Override pressure advance value
+                SET_PRESSURE_ADVANCE ADVANCE=0.04; Override pressure advance value
+            """.trimIndent())
+            assertEquals(
+                SlicePreparationTools.PressureAdvanceCommands(
+                    filament = listOf("0.04", "0.06"),
+                    custom = listOf("0.051"),
+                ),
+                SlicePreparationTools.readPressureAdvanceCommands(file),
+            )
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun metadataAloneDoesNotCountAsPressureAdvanceCommand() {
+        val file = File.createTempFile("slice-pressure-metadata", ".gcode")
+        try {
+            file.writeText("; pressure_advance = 0.05\n; enable_pressure_advance = 1\n")
+            assertEquals(
+                SlicePreparationTools.PressureAdvanceCommands(emptyList(), emptyList()),
+                SlicePreparationTools.readPressureAdvanceCommands(file),
+            )
+        } finally {
+            file.delete()
+        }
+    }
+
     @Test(expected = IOException::class)
     fun rejectsAnEmptyGcodeFileBeforeShowingPrintPreparation() {
         val file = File.createTempFile("slice-tools-empty", ".gcode")

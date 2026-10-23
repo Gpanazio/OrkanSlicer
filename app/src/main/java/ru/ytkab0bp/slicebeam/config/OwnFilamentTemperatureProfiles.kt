@@ -12,4 +12,8 @@ object OwnFilamentTemperatureProfiles {
 
     fun isTemperatureKey(key: String): Boolean = key.contains("temperature") || key.endsWith("_temp") ||
         key.contains("_temp_")
+
+    /** A user's selected filament also owns pressure compensation, not the imported 3MF. */
+    fun isOwnFilamentOverrideKey(key: String): Boolean = isTemperatureKey(key) ||
+        key == "pressure_advance" || key == "enable_pressure_advance"
 }

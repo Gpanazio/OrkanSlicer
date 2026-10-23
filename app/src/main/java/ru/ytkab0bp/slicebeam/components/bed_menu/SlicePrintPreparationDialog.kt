@@ -55,13 +55,14 @@ object SlicePrintPreparationDialog {
         SlicePreparationTools.isAnycubicKobra3Model(printer?.get("printer_model"))
 
     @JvmStatic
-    fun show(
+    internal fun show(
         fragment: BedFragment,
         printer: ConfigObject,
         print: Boolean,
         gcodeToolCount: Int,
         activeTools: IntArray,
         sourceFilamentTypes: List<String>,
+        pressureAdvance: SlicePreparationTools.PressureAdvanceCommands,
         activateProfile: PrinterProfileAction,
         reopenAfterReslice: (ConfigObject) -> Unit,
         sendAction: SliceMenuItems.SendAction,
@@ -96,6 +97,7 @@ object SlicePrintPreparationDialog {
                         mappingSummary = mappingSummary.takeIf {
                             isAnycubicKobra(currentPrinter) && activeTools.isNotEmpty()
                         },
+                        pressureAdvance = pressureAdvance,
                         onSelectPrinter = { chosen ->
                             selectedPrinter.value = chosen
                             printerChanged.value = printerChanged.value || SlicePreparationTools.didPrinterChange(
@@ -236,6 +238,7 @@ private fun PrintPreparationContent(
     printer: ConfigObject,
     availablePrinters: List<ConfigObject>,
     mappingSummary: String?,
+    pressureAdvance: SlicePreparationTools.PressureAdvanceCommands,
     onSelectPrinter: (ConfigObject) -> Unit,
     onEditMapping: () -> Unit,
 ) {
@@ -301,6 +304,24 @@ private fun PrintPreparationContent(
             lineHeight = 20.sp,
             modifier = Modifier.padding(horizontal = 4.dp),
         )
+        val filamentPa = pressureAdvance.filament.joinToString(", ")
+        val customPa = pressureAdvance.custom.joinToString(", ")
+        Text(
+            text = when {
+                filamentPa.isNotEmpty() -> stringResource(R.string.PrintPreparePressureAdvanceFilament, filamentPa)
+                customPa.isNotEmpty() -> stringResource(R.string.PrintPreparePressureAdvanceCustomOnly, customPa)
+                else -> stringResource(R.string.PrintPreparePressureAdvanceNone)
+            },
+            color = if (filamentPa.isEmpty()) MaterialTheme.colorScheme.error else secondary,
+            fontSize = 13.sp,
+            lineHeight = 18.sp,
+            modifier = Modifier.padding(horizontal = 4.dp),
+        )
+        if (filamentPa.isNotEmpty() && customPa.isNotEmpty() && customPa != filamentPa) {
+            Text(stringResource(R.string.PrintPreparePressureAdvanceAlsoCustom, customPa),
+                color = MaterialTheme.colorScheme.error, fontSize = 13.sp, lineHeight = 18.sp,
+                modifier = Modifier.padding(horizontal = 4.dp))
+        }
         if (mappingSummary != null) {
             Text(
                 text = mappingSummary,

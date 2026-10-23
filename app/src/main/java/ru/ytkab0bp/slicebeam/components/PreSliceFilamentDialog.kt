@@ -78,13 +78,14 @@ object PreSliceFilamentDialog {
             .distinct().sorted().map { it - 1 }.toIntArray()
         val sliceTemperatures = runCatching {
             val snapshot = SliceBeam.buildCurrentConfigObject(model?.requiredFilamentCount ?: -1)
+            val bedKeys = ru.ytkab0bp.slicebeam.config.BedSurfaceTemperaturePolicy.keysFor(snapshot["curr_bed_type"])
             usedTools.map { tool ->
                 fun value(key: String): String {
                     val values = snapshot[key].orEmpty().split(',').map(String::trim)
                     return (values.getOrNull(tool) ?: values.lastOrNull()).orEmpty().ifBlank { "?" }
                 }
                 context.getString(R.string.PreSliceTemperatureRow, tool,
-                    value("hot_plate_temp_initial_layer"), value("hot_plate_temp"),
+                    value(bedKeys.firstLayer), value(bedKeys.otherLayers),
                     value("nozzle_temperature_initial_layer"), value("nozzle_temperature"))
             }
         }.getOrDefault(emptyList())

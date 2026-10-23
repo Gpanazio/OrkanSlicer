@@ -2,6 +2,7 @@ package ru.ytkab0bp.slicebeam.components.bed_menu
 
 import android.view.View
 import com.google.android.material.snackbar.Snackbar
+import ru.ytkab0bp.slicebeam.utils.ViewUtils
 import ru.ytkab0bp.slicebeam.R
 import ru.ytkab0bp.slicebeam.SliceBeam
 import ru.ytkab0bp.slicebeam.events.NeedSnackbarEvent
@@ -38,18 +39,20 @@ internal class OrientationMenuItems(
                 R.string.MenuOrientationAutoOrient,
                 R.drawable.menu_orientation_auto_28,
                 {
-                    if (renderer.resetFlattenMode()) {
-                        fragment.glView!!.requestRender()
-                        resetFlattenCheckedState()
-                    }
-                    val selected = renderer.selectedObject
-                    if (selected != -1) {
-                        renderer.model!!.autoOrient(selected)
+                    val view = fragment.glView ?: return@BedComposeMenuAction
+                    view.queueEvent {
+                        val model = renderer.model ?: return@queueEvent
+                        val selected = renderer.selectedObject
+                        if (selected !in 0 until model.objectsCount) return@queueEvent
+                        renderer.resetFlattenMode()
+                        model.autoOrient(selected)
                         renderer.invalidateGlModel(selected)
-                        fragment.glView!!.requestRender()
-                        SliceBeam.EVENT_BUS.fireEvent(
-                            NeedSnackbarEvent(R.string.MenuOrientationAutoOrientDone, Snackbar.LENGTH_SHORT),
-                        )
+                        view.requestRender()
+                        fragment.recordModelEditOnGl()
+                        ViewUtils.postOnMainThread {
+                            resetFlattenCheckedState()
+                            SliceBeam.EVENT_BUS.fireEvent(NeedSnackbarEvent(R.string.MenuOrientationAutoOrientDone, Snackbar.LENGTH_SHORT))
+                        }
                     }
                 },
                 sectionBreakBefore = true,
@@ -60,8 +63,9 @@ internal class OrientationMenuItems(
                 R.drawable.menu_orientation_flatten_28,
                 {
                     flattenEnabled = !flattenEnabled
-                    renderer.setInFlattenMode(flattenEnabled)
-                    fragment.glView!!.requestRender()
+                    val flatten = flattenEnabled
+                    val view = fragment.glView ?: return@BedComposeMenuAction
+                    view.queueEvent { renderer.setInFlattenMode(flatten); view.requestRender() }
                     onItemsChanged()
                 },
                 selected = flattenEnabled,
@@ -96,10 +100,9 @@ internal class OrientationMenuItems(
     fun onSelectionChanged() = resetFlattenCheckedState()
 
     private fun resetFlattenIfNeeded(renderer: ru.ytkab0bp.slicebeam.render.GLRenderer) {
-        if (renderer.resetFlattenMode()) {
-            fragment.glView!!.requestRender()
-            resetFlattenCheckedState()
-        }
+        val view = fragment.glView ?: return
+        view.queueEvent { if (renderer.resetFlattenMode()) view.requestRender() }
+        resetFlattenCheckedState()
     }
 
     private fun resetFlattenCheckedState() {

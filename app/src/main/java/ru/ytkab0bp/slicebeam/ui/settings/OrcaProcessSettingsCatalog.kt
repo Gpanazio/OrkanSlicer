@@ -26,7 +26,7 @@ object OrcaProcessSettingsCatalog {
                 section("Wall generator", "wall_generator", "wall_transition_angle", "wall_transition_filter_deviation", "wall_transition_length", "wall_distribution_count", "min_bead_width", "min_feature_size"),
                 section("Walls and surfaces", "extra_perimeters_on_overhangs", "precise_outer_wall", "ensure_vertical_shell_thickness", "reduce_crossing_wall", "max_travel_detour_distance", "only_one_wall_top", "only_one_wall_first_layer", "wall_sequence", "wall_direction", "gap_fill_target", "reduce_infill_retraction", "is_infill_first"),
                 section("Overhangs", "detect_overhang_wall", "overhang_reverse", "overhang_reverse_threshold", "overhang_reverse_internal_only", "overhang_flow_ratio"),
-                section("Bridging", "thick_bridges", "bridge_angle", "internal_bridge_angle", "dont_filter_internal_bridges", "thick_internal_bridges", "enable_extra_bridge_layer", "counterbore_hole_bridging"),
+                section("Bridging", "bridge_line_width", "bridge_flow", "bridge_density", "thick_bridges", "bridge_angle", "internal_bridge_angle", "relative_bridge_angle", "dont_filter_internal_bridges", "thick_internal_bridges", "enable_extra_bridge_layer", "counterbore_hole_bridging"),
             ),
         ),
         OrcaSettingsCategory(
@@ -42,7 +42,6 @@ object OrcaProcessSettingsCatalog {
                 section("Wall flow ratio", "outer_wall_flow_ratio", "inner_wall_flow_ratio", "gap_fill_flow_ratio", "first_layer_flow_ratio"),
                 section("Solid and infill flow ratio", "top_solid_infill_flow_ratio", "bottom_solid_infill_flow_ratio", "internal_solid_infill_flow_ratio", "sparse_infill_flow_ratio"),
                 section("Internal bridges", "internal_bridge_density", "internal_bridge_flow", "internal_bridge_speed", "internal_bridge_fan_speed"),
-                section("Advanced", "bridge_flow", "bridge_density"),
             ),
         ),
         OrcaSettingsCategory(
